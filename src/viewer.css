@@ -1,0 +1,211 @@
+/* 閲覧モードの版面（設計 第4節・第5節）。
+   このファイルは viewer.ts からのみ import される。閲覧モードに入るまで
+   読み込まれないので、起動時の費用にならない（第3節）。
+
+   狙いは一つだけである——**AI が出した 3000 字超の日本語を、通しで読み通せること。**
+   欧文向けの既定値（行長 70 文字前後・行間 1.5）は日本語では詰まりすぎるため、
+   行長は全角で数え、行間と段落間はそれに合わせて広げてある。
+
+   **ここに現れるクラス名は公開 API である**（第9-4節）。利用者が自分の CSS で
+   見た目を変えられることが要件なので、名前を変えるときは docs/CSS.md も直すこと。 */
+
+.gera-view {
+  height: 100%;
+  overflow-y: auto;
+  /* 本文以外の常設 UI を置かない（第5節）ので、余白がそのまま画面構成になる。
+     下の 60vh は、末尾を画面の中ほどまで送れるようにするためのもの（editor.ts と同じ）。 */
+  padding: 3.5rem 1.5rem 60vh;
+  box-sizing: border-box;
+  outline: none; /* キーボードで送るために tabindex を持つが、枠は出さない */
+}
+
+.gera-doc {
+  /* 明朝で組むこと自体がモード表示である（第5節）。切り替えの唯一の手掛かりなので、
+     ここで書体を上書きしない。 */
+  font-family: var(--font-serif);
+  /* 1em = 全角一文字。日本語は 30〜40 字で折り返すのが読みやすい。 */
+  max-width: 35em;
+  margin: 0 auto;
+  font-size: 17px;
+  line-height: 1.95;
+  color: var(--fg);
+  /* 長い URL や語で行が破綻しないようにするだけで、日本語の折り返しは既定に任せる。 */
+  overflow-wrap: break-word;
+}
+
+.gera-doc > :first-child { margin-top: 0; }
+
+/* ------------------------------------------------------ 画面外を描かない */
+
+/* **初版の必須要件である**（第5-4節）。2,204 個の数式を含む 2,838 行の文書で、
+   描画 1,156 ms のうち 951 ms（82%）がレイアウトとペイントだった。
+   content-visibility: auto は画面の外にあるブロックをその両方から外す。
+
+   **実測し直した値を残す**（gera の release ビルド、同じ文書、WebKitGTK 2.52）。
+   閲覧モードに切り替えてから最初のフレームが出るまで、有りで 797 ms、
+   無しで 939〜1,104 ms。設計文書の 1,028 → 449 ms ほどの差は出なかったが、
+   効いてはいる。**ただし途中で寸法を測ると効果が消える**——同期のレイアウトが
+   その場で走り、飛ばすはずだった仕事を先に払うためで、実測で 946 ms に戻った。
+   viewer.ts の scrollToLine が先頭のときに測らないのはこのためである。
+
+   **contain-intrinsic-size を必ず添える。**無いと画面外の高さが 0 と見なされ、
+   文書全体の高さが縮んでスクロールバーが暴れる。値は「その種類の要素の
+   ありがちな高さ」で構わない——`auto` 付きの指定を解する実装では一度描いた
+   要素は実測値を憶えるので、推定が効くのは初回だけである。`auto` を解さない
+   実装のために素の値を先に置き、二段で書く。
+
+   推定がずれる以上、位置合わせは一度では着かない。寄せ直しは viewer.ts の
+   settle() が持つ。 */
+
+.gera-doc > * {
+  content-visibility: auto;
+  contain-intrinsic-size: 110px;
+  contain-intrinsic-size: auto 110px;
+}
+/* 見出しは一行しかないので、段落と同じ推定を与えると文書が実際より長く見える。 */
+.gera-doc > h1 { contain-intrinsic-size: 52px; contain-intrinsic-size: auto 52px; }
+.gera-doc > h2 { contain-intrinsic-size: 46px; contain-intrinsic-size: auto 46px; }
+.gera-doc > h3,
+.gera-doc > h4,
+.gera-doc > h5,
+.gera-doc > h6 { contain-intrinsic-size: 34px; contain-intrinsic-size: auto 34px; }
+/* 箇条書き・コード・表・別行立ての数式は段落より背が高いほうに寄せる。 */
+.gera-doc > ul,
+.gera-doc > ol { contain-intrinsic-size: 160px; contain-intrinsic-size: auto 160px; }
+.gera-doc > pre { contain-intrinsic-size: 220px; contain-intrinsic-size: auto 220px; }
+.gera-doc > .gera-table { contain-intrinsic-size: 220px; contain-intrinsic-size: auto 220px; }
+.gera-doc > .gera-math { contain-intrinsic-size: 60px; contain-intrinsic-size: auto 60px; }
+/* 罫は実寸が分かっているので推定を要らなくする。 */
+.gera-doc > hr { content-visibility: visible; }
+
+/* ------------------------------------------------------------------ 見出し */
+
+/* 階層は大きさより**上の余白**で示す。装飾を足さずに切れ目が見えるほうが、
+   長い文書では効く。h2 にだけ罫を引いてあるのは、章の切れ目が最も重要だからで、
+   すべての見出しに引くと罫だらけになって差が消える。 */
+.gera-doc h1, .gera-doc h2, .gera-doc h3,
+.gera-doc h4, .gera-doc h5, .gera-doc h6 {
+  font-weight: 600;
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+  /* 見出しジャンプの着地点。上の余白ごと画面外に出ないようにする。 */
+  scroll-margin-top: 1.5rem;
+}
+.gera-doc h1 { font-size: 2em;    margin: 2.4em 0 1.2em; }
+.gera-doc h2 { font-size: 1.5em;  margin: 3.2em 0 1.1em; padding-bottom: 0.35em; border-bottom: 1px solid var(--rule); }
+.gera-doc h3 { font-size: 1.22em; margin: 2.6em 0 0.9em; }
+.gera-doc h4 { font-size: 1.06em; margin: 2.2em 0 0.8em; }
+.gera-doc h5 { font-size: 1em;    margin: 2em 0 0.7em; }
+.gera-doc h6 { font-size: 1em;    margin: 2em 0 0.7em; color: var(--dim); }
+
+/* -------------------------------------------------------------- 段落と箇条 */
+
+.gera-doc p { margin: 1.5em 0; }
+
+.gera-doc ul, .gera-doc ol { margin: 1.5em 0; padding-left: 1.7em; }
+.gera-doc li { margin: 0.5em 0; }
+/* 入れ子は外側との間隔を詰める。親の段落と同じだけ空けると、階層が崩れて見える。 */
+.gera-doc li > ul, .gera-doc li > ol { margin: 0.5em 0; }
+.gera-doc li > p { margin: 0.6em 0; }
+.gera-doc ul > li::marker { color: var(--accent); }
+
+/* 読み専用なので checkbox は固定。記号の位置は箇条書きの点と揃える。 */
+.gera-doc li.gera-task { list-style: none; margin-left: -1.35em; }
+.gera-doc li.gera-task input[type="checkbox"] { margin: 0 0.5em 0 0; accent-color: var(--accent); }
+
+.gera-doc blockquote {
+  margin: 1.8em 0;
+  padding: 0.1em 0 0.1em 1.2em;
+  border-left: 3px solid var(--rule);
+  /* 本文より一段引くが、読めなくなるほど薄くはしない。 */
+  opacity: 0.88;
+}
+
+.gera-doc hr { border: 0; border-top: 1px solid var(--rule); margin: 3.5em 0; }
+
+/* ------------------------------------------------------------ 文字と装飾 */
+
+.gera-doc strong { font-weight: 700; }
+.gera-doc em { font-style: italic; }
+.gera-doc del { color: var(--dim); }
+.gera-doc a { color: var(--accent); text-decoration: underline; text-underline-offset: 0.18em; }
+
+.gera-doc img { display: block; max-width: 100%; margin: 1.8em auto; }
+
+/* --------------------------------------------------------------- コード */
+
+/* シンタックスハイライトは入れない（起動速度が第一優先。第3節）。
+   等幅と地色だけで、本文との区別は十分に付く。 */
+.gera-doc code, .gera-doc pre { font-family: var(--font-mono); }
+
+.gera-doc :not(pre) > code {
+  font-size: 0.9em;
+  background: var(--code-bg);
+  padding: 0.1em 0.35em;
+  border-radius: 3px;
+}
+
+.gera-doc pre {
+  margin: 1.8em 0;
+  padding: 1em 1.1em;
+  background: var(--code-bg);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  font-size: 0.875em;
+  line-height: 1.7;
+  tab-size: 4;
+  /* **はみ出しはこの箱の中だけで送る。**本文まで横に動くと行頭を見失う。 */
+  overflow-x: auto;
+}
+.gera-doc pre > code { white-space: pre; background: none; padding: 0; }
+
+/* ----------------------------------------------------------------- 表 */
+
+/* AI 出力の表は横に長い。本文ごと横スクロールさせず、表の中だけで送る。 */
+.gera-table { margin: 1.8em 0; overflow-x: auto; }
+
+.gera-doc table { border-collapse: collapse; font-size: 0.93em; line-height: 1.75; }
+.gera-doc th, .gera-doc td {
+  border: 1px solid var(--rule);
+  padding: 0.5em 0.85em;
+  text-align: left;
+  vertical-align: top;
+}
+/* 見出し行は地色と字面で二重に区別する。列数の多い表ほど、ここが効く。 */
+.gera-doc thead th { background: var(--code-bg); font-weight: 600; white-space: nowrap; }
+.gera-doc tbody tr:nth-child(even) { background: var(--zebra); }
+
+/* --------------------------------------------------------------- 数式 */
+
+/* KaTeX の既定は本文の 1.21 倍で、17px の日本語の隣では大きく浮く。
+   欧文の本文に合わせた値なので、和文向けに落とす。 */
+.gera-doc .katex { font-size: 1.08em; }
+
+/* 別行立ては横に長くなる。**本文ごと横スクロールさせない**のは表やコードと
+   同じ理由で、行頭が動くと読めなくなる。 */
+.gera-math {
+  margin: 1.8em 0;
+  overflow-x: auto;
+  /* はみ出しを切らずに送るため、内側の p の余白はここに移す。 */
+  padding: 0.2em 0;
+}
+.gera-math > .katex-block { margin: 0; }
+.gera-doc .katex-block { text-align: center; }
+.gera-doc .katex-display { margin: 0; }
+
+/* 変換に失敗した数式（KaTeX が解せない綴り）。本文色のままだと誤りに見えないので、
+   等幅で地色を付けて「ここは描けなかった」と分かる形にする。 */
+.gera-doc .katex-error {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  color: var(--dim);
+  background: var(--code-bg);
+  padding: 0.1em 0.35em;
+  border-radius: 3px;
+}
+
+/* --------------------------------------------------------- 折りたたみ */
+
+/* AI 出力に頻出する。html: true で通しているので、閉じた状態でも形を保つ。 */
+.gera-doc details { margin: 1.6em 0; padding-left: 1.2em; border-left: 3px solid var(--rule); }
+.gera-doc summary { cursor: default; font-weight: 600; }

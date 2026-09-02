@@ -19,6 +19,7 @@
   --accent:   #8a5a2b;
   --code-bg:  #f0ece3;
   --sel:      #dfe6ef;
+  --zebra:    #f4f1ea;  /* 閲覧モードの表の縞。列数の多い表で行を追うためだけのもの */
 }
 
 @media (prefers-color-scheme: dark) {
@@ -30,6 +31,7 @@
     --accent:  #d0a26a;
     --code-bg: #24221d;
     --sel:     #2f3a47;
+    --zebra:   #201e1a;
   }
 }
 
