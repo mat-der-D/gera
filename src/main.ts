@@ -27,6 +27,8 @@ import { reportFontResolution } from "./fonts";
 
 let currentPath: string | null = null;
 let dirty = false;
+// 空の文書で始まるので最初は編集モードである。文書が入った時点で閲覧モードへ移す
+// （このファイル末尾の起動処理と openFile）。
 let mode: "edit" | "view" = "edit";
 
 // ---------------------------------------------------------------- 失敗の通知
@@ -144,6 +146,10 @@ async function openFile(view: EditorView): Promise<void> {
   currentPath = path;
   dirty = false;
   refreshTitle();
+  // **文書を読み込んだら閲覧モードで見せる**（第1節「ほとんどビューアー」）。
+  // 起動時の復元（下）と同じ扱いにする——どの経路で文書が入っても着く先が
+  // 同じでなければ、利用者はモードを意識させられる。
+  await enterView(0);
 }
 
 async function saveFile(view: EditorView, forcePicker: boolean): Promise<void> {
@@ -238,29 +244,51 @@ function editorTopLine(): number {
   return view.state.doc.lineAt(pos).number - 1;
 }
 
+/** 器を一度でも画面に出したか。出していなければスクロール位置はまだ 0 である。 */
+let shown = false;
+
+/** 閲覧モードの器を画面に出し、編集モードを隠す。描くのは enterView。 */
+function showViewer(): HTMLElement | null {
+  const app = document.getElementById("app");
+  if (!app) return null;
+  const el = viewerElement();
+  // 寸法を測ってから位置を合わせるので、描く前に画面へ出しておく。
+  el.hidden = false;
+  app.hidden = true;
+  mode = "view";
+  return el;
+}
+
 /**
- * モードの切り替え（第5節）。**両方向で、いま見ていた場所が引き続き見えること**を
- * 満たすため、行番号を挟んで位置を渡す。段落と行は一対一でないので一致はしないが、
- * 同じ見出しの近くには戻る。
+ * 閲覧モードへ入る。`line`（0 始まり）を画面の先頭に見せる。
+ *
+ * **文書を読み込んだ直後もここを通る**（起動時の復元と openFile）。編集モードで
+ * 起動して `Mod+E` を待つ形だと、変換と描画（2,204 数式の文書で約 1.0 秒）が
+ * 利用者の待ち時間に丸ごと乗り、そのうえ本文が先に出てから数式が埋まって
+ * 組み直される点滅が見える。起動処理と重ねればどちらも消える。
  */
-async function toggleMode(): Promise<void> {
-  const app = viewerElement().ownerDocument.getElementById("app");
+async function enterView(line: number, text?: string): Promise<void> {
+  const el = showViewer();
+  if (!el) return;
+  const module = (viewer ??= await import("./viewer"));
+  // **一度も画面に出していない器は、スクロール位置がまだ 0 である。**
+  // `scrollTop` への代入は、値を丸めるために同期のレイアウトを走らせるので、
+  // 0 を入れる必要が無いときは触らない。**実測での取り分は小さい**——この一行を
+  // 戻して測り直すと、2,204 数式の文書で初回の描画が 1,850 ms 前後から
+  // 1,865 ms 前後に伸びるだけだった（各 5 回）。**やらない理由も無い、という水準
+  // である。**この経路の 1 秒近くは変換と初回レイアウトそのものが占めている。
+  const fresh = !shown;
+  shown = true;
+  module.renderInto(el, text ?? view.state.doc.toString());
+  if (line > 0 || !fresh) module.scrollToLine(el, line);
+  // focus() は既定で対象を画面内へ送ろうとして寸法を測る。上と同じ理由で止める。
+  el.focus({ preventScroll: true });
+}
+
+/** 編集モードへ戻る。閲覧モードで先頭に見えていた行を、そのまま先頭に置く（第9-3節）。 */
+function enterEdit(): void {
+  const app = document.getElementById("app");
   if (!app) return;
-
-  if (mode === "edit") {
-    const module = (viewer ??= await import("./viewer"));
-    const line = editorTopLine();
-    const el = viewerElement();
-    // 寸法を測ってから位置を合わせるので、描く前に画面へ出しておく。
-    el.hidden = false;
-    app.hidden = true;
-    mode = "view";
-    module.renderInto(el, view.state.doc.toString());
-    module.scrollToLine(el, line);
-    el.focus();
-    return;
-  }
-
   const el = viewerElement();
   const line = viewer ? viewer.topLine(el) : 0;
   el.hidden = true;
@@ -271,6 +299,16 @@ async function toggleMode(): Promise<void> {
   const target = view.state.doc.line(Math.min(line + 1, view.state.doc.lines));
   view.dispatch({ effects: EditorView.scrollIntoView(target.from, { y: "start", yMargin: 24 }) });
   view.focus();
+}
+
+/**
+ * モードの切り替え（第5節）。**両方向で、いま見ていた場所が引き続き見えること**を
+ * 満たすため、行番号を挟んで位置を渡す。段落と行は一対一でないので一致はしないが、
+ * 同じ見出しの近くには戻る。
+ */
+async function toggleMode(): Promise<void> {
+  if (mode === "edit") await enterView(editorTopLine());
+  else enterEdit();
 }
 
 /**
@@ -311,13 +349,31 @@ refreshTitle();
 
 // 退避の復帰は起動後の非同期で行う。読めなくても空の文書で使えるべきなので、
 // 画面の生成をこれで待たせない。
+//
+// **文書が入ったら閲覧モードで見せる。**gera はほとんどビューアーである（第1節）。
+// ここで切り替えることで、変換と描画が起動処理と重なり、利用者から見た待ち時間は
+// 「アプリの起動」だけになる。
+//
+// **文書が空のときは編集モードのまま始める。**空の閲覧モードには表示するものが無く、
+// カーソルも持たない（第9-1節「読み専用・カーソルを持たない」）ので、
+// 画面には何も無く、打つこともできない状態になる。空の文書に対して利用者ができる
+// ことは「書き始める」か「開く」だけであり、前者は編集モードでしか行えない。
+// 速度の面でも失うものが無い——変換するものが無いのだから閲覧モードを先に
+// 用意しても縮まる時間は無く、むしろ要らない動的 import を払う（第4節）。
 run("退避の読み込み", async () => {
   const session = await loadSession();
   if (!session || !session.text) return;
-  replaceDoc(view, session.text);
   currentPath = session.path;
   // 退避は「まだファイルに書いていない状態」の記録なので、dirty は落とさない。
   dirty = true;
   refreshTitle();
+  // **読む画面を先に出し、編集モードの中身はそのあとで用意する。**逆にすると、
+  // 生ソースがゴシックで約 1 秒見えてから明朝の版面に組み変わる。**実測ではその
+  // 順序のほうが 140 ms 速い**（1.85 秒 対 1.99 秒。編集モードを先に描くと、
+  // その描画で書体やレイアウトの下準備が済むためと見られる）**が、起動のたびに
+  // 生ソースが見えて組み直されるのは、閲覧モードで開く目的そのものを損なう。**
+  // 140 ms を払って、出るのは完成した版面だけにする。
+  await enterView(0, session.text);
+  replaceDoc(view, session.text);
 });
 
