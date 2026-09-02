@@ -1,0 +1,37 @@
+/* gera — 本文以外の常設 UI を持たない（設計 第5節）。
+   したがってこのファイルが受け持つのはウィンドウの地色と書体だけである。 */
+
+:root {
+  /* 第5節: 配布先ごとに実在する書体が違うためスタックで書く。
+     Windows には Noto CJK が無く、游明朝・游ゴシックが標準搭載である。 */
+  --font-serif: "Noto Serif CJK JP", "Noto Serif JP", "Yu Mincho", YuMincho,
+                "Hiragino Mincho ProN", "MS PMincho", serif;
+  --font-sans:  "Noto Sans CJK JP", "Noto Sans JP", "Yu Gothic", YuGothic,
+                "Hiragino Sans", "Hiragino Kaku Gothic ProN", Meiryo, sans-serif;
+  --font-mono:  "Noto Sans Mono CJK JP", "Cascadia Mono", Consolas,
+                "DejaVu Sans Mono", monospace;
+
+  /* ゲラ＝校正刷り。地色は紙に寄せる。 */
+  --bg:       #faf8f4;
+  --fg:       #23211d;
+  --dim:      #a9a196;  /* 記法記号。常に見えるが、読みの邪魔をしない濃さ */
+  --rule:     #ddd6ca;
+  --accent:   #8a5a2b;
+  --code-bg:  #f0ece3;
+  --sel:      #dfe6ef;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:      #1b1a17;
+    --fg:      #e7e2d8;
+    --dim:     #6f6a60;
+    --rule:    #3a372f;
+    --accent:  #d0a26a;
+    --code-bg: #24221d;
+    --sel:     #2f3a47;
+  }
+}
+
+html, body, #app { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--fg); }
