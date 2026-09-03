@@ -322,6 +322,66 @@ async function toggleMode(): Promise<void> {
   else await enterEdit();
 }
 
+// ---------------------------------------------------------- 見出しへ飛ぶ
+
+/**
+ * いま画面の先頭に見えている行（0 始まり）。**モードによらず同じ意味になる。**
+ * 位置を渡し合う手段は行番号ひとつに揃えてある（第9-3節）。
+ */
+function currentLine(): number {
+  if (mode === "view") return shown && scroller ? viewer.topLine(scroller) : 0;
+  return view ? editorTopLine(view) : 0;
+}
+
+/** 焦点をいまのモードの本体へ返す。閲覧モードは矢印キーを受けるために焦点が要る。 */
+function focusCurrent(): void {
+  if (mode === "view") scroller?.focus({ preventScroll: true });
+  else view?.focus();
+}
+
+/**
+ * 指定した行を画面の先頭に置く。**閲覧モードでも編集モードでも同じ意味になる**
+ * ——アウトラインが飛び先として知っているのは行番号だけである。
+ */
+function jumpToLine(line: number): void {
+  if (mode === "view") {
+    // 閲覧モードは `content-visibility: auto` で画面外の高さが推定値なので、
+    // 一度寄せただけでは着かない。寄せ直しは viewer.ts の settle が持つ。
+    if (scroller && shown) viewer.scrollToLine(scroller, line);
+  } else if (view) {
+    scrollEditorToLine(view, line);
+  }
+  focusCurrent();
+}
+
+/**
+ * 見出しの一覧（第9-2節、第14節の実装順序 5）。`Mod+Shift+O` で出し入れする。
+ *
+ * **編集モードでも動かす。**「探す」は読むときだけの用ではなく、直す場所へ行くのも
+ * 同じ動作である。**受け口を window に置いてあるので**（下の keydown）CodeMirror の
+ * keymap と取り合いにならず、`Mod+Shift+O` は CodeMirror の既定に無いので
+ * 奪うものも無い。**両モードで同じキーが同じ意味を持つほうが、覚えることが少ない**
+ * （第4節の第二優先）。飛び先も、行番号を挟めば両モードで同じ扱いにできる。
+ *
+ * 一覧は**本文の正**（このファイルの `text`）から作る。編集モードでは打った直後の
+ * 本文がまだ描画に反映されていないので、描画済みの DOM を見に行くと古い一覧が出る。
+ */
+let outline: typeof import("./outline") | null = null;
+
+async function toggleOutline(): Promise<void> {
+  const ui = (outline ??= await import("./outline"));
+  if (ui.isOpen()) {
+    ui.close();
+    return;
+  }
+  ui.open({
+    headings: viewer.listHeadings(text),
+    current: currentLine(),
+    jump: jumpToLine,
+    restore: focusCurrent,
+  });
+}
+
 // -------------------------------------------------------------- 字の大きさ
 
 /**
@@ -390,8 +450,7 @@ function changeFontScale(step: number): void {
   const next = step === 0 ? UNIT : Math.min(SCALES.length - 1, Math.max(0, scaleIndex + step));
   if (next === scaleIndex) return;
   scaleIndex = next;
-  const line =
-    mode === "view" ? (shown && scroller ? viewer.topLine(scroller) : 0) : view ? editorTopLine(view) : 0;
+  const line = currentLine();
   applyFontScale();
   if (mode === "view") {
     if (scroller && shown) viewer.scrollToLine(scroller, line);
@@ -419,6 +478,18 @@ function changeFontScale(step: number): void {
 window.addEventListener("keydown", (e) => {
   if (!(e.metaKey || e.ctrlKey) || e.altKey || e.isComposing) return;
   const key = e.key.toLowerCase();
+
+  // 見出しの一覧を出したまま別の操作をしたら、その一覧はもう用済みである
+  // （`Mod+Shift+O` 自身だけは、出し入れの切り替えなので通す）。
+  if (outline?.isOpen() && !(key === "o" && e.shiftKey)) outline.close();
+
+  // 見出しへ飛ぶ（第9-2節）。VS Code の「ファイル内のシンボルへ移動」と同じ綴りに
+  // 揃えてある——**既に指に入っている操作なら、覚えることが増えない**（第4節）。
+  if (key === "o" && e.shiftKey) {
+    e.preventDefault();
+    run("見出しの一覧", toggleOutline);
+    return;
+  }
 
   if (key === "e") {
     e.preventDefault();

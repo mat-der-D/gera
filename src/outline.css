@@ -1,0 +1,107 @@
+/* 見出しへ飛ぶ道具の見た目（設計 第9-2節）。
+   outline.ts からのみ import される。**呼ばれるまで読み込まれない**ので、
+   起動時の費用にならない（第4節の第一優先）。
+
+   **ここに現れるクラス名は公開 API である**（第9-4節）。利用者が自分の CSS で
+   見た目を変えられることが要件なので、名前を変えるときは docs/CSS.md も直すこと。
+
+   **寸法はすべて rem で書く。**`--font-scale`（`Mod +/-`）が動かすのは
+   **版面**——読んでいる本文の大きさ——であって、道具の大きさではない。本文を
+   大きくしたときに一覧まで太ると、一画面に入る見出しが減って**探しにくくなる**。
+   目的が逆を向くので、ここは倍率から切り離す（`.gera-doc` の外に置いてあるので
+   既定でそうなるが、意図として書き残す）。
+
+   **色は style.css の変数だけで作る。**ダークモードは変数の側で切り替わるので、
+   ここに `prefers-color-scheme` を書く必要がない。半透明が要る二箇所
+   （覆いと影）も、生の黒ではなく変数から混ぜて作る——地色が紙色か墨色かで
+   正しい側に転ぶ。 */
+
+.gera-outline {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  /* 本文を薄く伏せる。**隠すためではなく、一覧が本文の一部でないことを示すため**で、
+     下の文字が読める濃さに留める。 */
+  background: color-mix(in srgb, var(--bg) 72%, transparent);
+  display: flex;
+  justify-content: center;
+  /* **一覧は中身の高さで留める。**既定の stretch だと、絞り込んで一件になっても
+     箱だけが画面の高さのまま残り、空白を見せることになる。 */
+  align-items: flex-start;
+  /* 画面の中央ではなく上寄せ。一覧は下へ伸びるので、上端が動かないほうが目が迷わない。 */
+  padding: 8vh 1.5rem 1.5rem;
+  box-sizing: border-box;
+}
+
+.gera-outline-box {
+  width: 100%;
+  max-width: 34rem;
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  /* 覆いが半透明なので、枠だけでは本文と地続きに見える。影で一枚持ち上げる。 */
+  box-shadow: 0 0.5rem 2rem color-mix(in srgb, var(--fg) 20%, transparent);
+  overflow: hidden;
+}
+
+.gera-outline-input {
+  /* 道具の文字はゴシック。明朝で組まれるのは本文だけで、それがモード表示でもある（第5節）。 */
+  font: 1rem/1.6 var(--font-sans);
+  color: var(--fg);
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--rule);
+  padding: 0.8rem 1rem;
+  outline: none;
+}
+.gera-outline-input::placeholder { color: var(--dim); }
+
+.gera-outline-list {
+  margin: 0;
+  padding: 0.4rem 0;
+  list-style: none;
+  overflow-y: auto;
+  font: 0.95rem/1.5 var(--font-sans);
+}
+
+.gera-outline-item {
+  padding: 0.35rem 1rem;
+  color: var(--fg);
+  cursor: default;
+  /* 見出しが長くても一行に収める。折り返すと一画面に入る本数が読めなくなる。 */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* 選択の帯を左端の印と揃えるための場所取り。選んでいない間は透明にしておく。 */
+  border-left: 2px solid transparent;
+}
+
+/* 階層は**字下げと濃さ**で示す。文書は `#` から始まるとは限らない（`##` で
+   始まる文書が普通にある）ので、深さは**その文書の中で最も浅い見出しからの差**で
+   数える。絶対の見出し番号で字下げすると、全部が一段下がって字下げの意味が消える。 */
+.gera-outline-item[data-depth="0"] { padding-left: 1rem; font-weight: 600; }
+.gera-outline-item[data-depth="1"] { padding-left: 2.1rem; }
+.gera-outline-item[data-depth="2"] { padding-left: 3.2rem; color: var(--dim); }
+.gera-outline-item[data-depth="3"] { padding-left: 4.3rem; color: var(--dim); }
+.gera-outline-item[data-depth="4"] { padding-left: 5.4rem; color: var(--dim); }
+.gera-outline-item[data-depth="5"] { padding-left: 6.5rem; color: var(--dim); }
+
+.gera-outline-selected {
+  background: var(--sel);
+  border-left-color: var(--accent);
+  /* 深い見出しは薄く出しているが、選んでいる一行だけは読める濃さに戻す。 */
+  color: var(--fg);
+}
+
+/* 打った文字が見出しのどこに当たったか。**当たった場所が見えないと、
+   なぜその行が残っているのかが分からない。** */
+.gera-outline-mark { color: var(--accent); font-weight: 700; }
+
+.gera-outline-empty {
+  padding: 1.2rem 1rem;
+  color: var(--dim);
+  font: 0.95rem/1.6 var(--font-sans);
+}

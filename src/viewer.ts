@@ -77,12 +77,55 @@ const slug = (text: string): string =>
     .replace(/[!-/:-@[-`{-~]/g, "")
     .replace(/\s+/g, "-");
 
+/**
+ * 見出し一つぶんの情報。アウトライン（第9-2節）が並べるのはこれである。
+ *
+ * **DOM からではなくトークンから引く。**閲覧モードは段階的に描画するので
+ * （viewer.css の `content-visibility: auto` と下の `EAGER`）、画面外の見出しは
+ * DOM の上には在っても中身が組まれていない段階がありうる。**変換の時点で
+ * 取っておけば、描画の進み具合に一切依存しない。**
+ */
+export interface Heading {
+  /** `#` の数（1〜6）。 */
+  level: number;
+  /** 記法記号を落とした見出しの本文。 */
+  text: string;
+  /** 元ソースの行番号（0 始まり）。`scrollToLine` に渡す。 */
+  line: number;
+  /** 見出しに振った id（上の slug と同じ綴り）。 */
+  id: string;
+}
+
+interface HeadingEnv extends Env {
+  headings?: Heading[];
+}
+
+/**
+ * 見出しの表示用の文字列。
+ *
+ * `inline.content` は生の Markdown なので `**強調**` の記号がそのまま出る。
+ * 一覧は見出しを「読む」ための場所ではなく「見分ける」ための場所なので、
+ * 記号は落として字面だけを残す。数式は組まずに綴りのまま出す——一覧の中で
+ * KaTeX を呼ぶと、後回しにした費用をここで払い直すことになる。
+ */
+const plainText = (inline: Token): string => {
+  const parts: string[] = [];
+  for (const child of inline.children ?? []) {
+    if (child.type === "text" || child.type === "code_inline" || child.type.startsWith("math_")) {
+      parts.push(child.content);
+    }
+  }
+  const text = parts.join("").trim();
+  return text || inline.content.trim();
+};
+
 const headingIds = (md: MarkdownItInstance): void => {
   md.core.ruler.push("gera_heading_ids", (state) => {
     // 同じ見出しが二度出たら GitHub と同じく連番を足す。id が重なると
     // ジャンプ先が常に先頭の一つになり、後ろの章へ飛べなくなる。
     const used = new Map<string, number>();
     const tokens = state.tokens;
+    const found: Heading[] = [];
     for (let i = 0; i < tokens.length - 1; i++) {
       const open = tokens[i];
       const inline = tokens[i + 1];
@@ -91,8 +134,18 @@ const headingIds = (md: MarkdownItInstance): void => {
       const base = slug(inline.content) || "section";
       const n = used.get(base) ?? 0;
       used.set(base, n + 1);
-      open.attrSet("id", n === 0 ? base : `${base}-${n}`);
+      const id = n === 0 ? base : `${base}-${n}`;
+      open.attrSet("id", id);
+      // 一覧はここで作る。**別に走査を足さない**——見出しを探して回るのは
+      // このループがすでにやっていることであり、二度舐める理由が無い。
+      found.push({
+        level: Number(open.tag.slice(1)) || 1,
+        text: plainText(inline),
+        line: open.map?.[0] ?? 0,
+        id,
+      });
     }
+    (state.env as HeadingEnv).headings = found;
     return true;
   });
 };
@@ -287,10 +340,33 @@ let body: HTMLElement | null = null;
  * 全文と断片（局所編集）で経路を分けない——分ければ、そこだけ sanitize を
  * 通し忘れうる。数式を実際に組むのは呼び出し側の役目である。
  */
-function build(markdown: string): { html: string; math: (() => string)[] } {
-  const env: MathEnv = {};
+function build(markdown: string): { html: string; math: (() => string)[]; headings: Heading[] } {
+  const env: MathEnv & HeadingEnv = {};
   const html = sanitize(md.render(markdown, env));
-  return { html, math: env.math ?? [] };
+  return { html, math: env.math ?? [], headings: env.headings ?? [] };
+}
+
+// ---------------------------------------------------------------- 見出し一覧
+
+/**
+ * 見出しの一覧（第9-2節のアウトライン）。
+ *
+ * **描いたときの結果を憶えておき、同じ本文なら変換をやり直さない。**閲覧モードで
+ * 呼ぶぶんには `renderInto` が必ず先に通っているので、ここは憶えた配列を返すだけの
+ * 経路になる。編集モードから呼ぶと本文が描画より新しいことがあるので、そのときだけ
+ * `md.parse` を走らせる——**`render` ではなく `parse` である。**HTML も KaTeX も
+ * 要らず、要るのはトークンだけなので、変換の一番高い部分（第5-4節）を払わずに済む。
+ */
+let headingsText: string | null = null;
+let headings: Heading[] = [];
+
+export function listHeadings(markdown: string): Heading[] {
+  if (markdown === headingsText) return headings;
+  const env: HeadingEnv = {};
+  md.parse(markdown, env);
+  headingsText = markdown;
+  headings = env.headings ?? [];
+  return headings;
 }
 
 /**
@@ -345,7 +421,10 @@ export function renderInto(scroller: HTMLElement, text: string): void {
   }
   if (text === lastText) return;
   lastText = text;
-  const { html, math } = build(text);
+  const { html, math, headings: found } = build(text);
+  // 描くついでに見出しも憶える。アウトラインを呼んだときに変換をやり直さない。
+  headingsText = text;
+  headings = found;
   // トップレベルのブロックが .gera-doc の直下に平らに並ぶ。ブロック一つを
   // replaceWith で入れ替えても壊れない形にしておく（局所編集のため）。
   body.innerHTML = html;
