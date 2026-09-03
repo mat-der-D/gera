@@ -11,6 +11,19 @@
   --font-mono:  "Noto Sans Mono CJK JP", "Cascadia Mono", Consolas,
                 "DejaVu Sans Mono", monospace;
 
+  /* 字の大きさは**基準と倍率に分けてある**（第9-4節）。
+     - 基準（`--font-size-*`）は**利用者 CSS が決める場所**である。閲覧と編集で
+       値が違うのは、明朝 17px と ゴシック 16px が別の書体に合わせた寸法だからで、
+       片方に揃えるとどちらかの版面が崩れる。
+     - 倍率（`--font-scale`）は `Mod +/-/0` だけが触る（main.ts）。**利用者 CSS は
+       ここに触らない。**触ると `Mod 0` の戻り先が動く。
+
+     二つに分けてあるので、`Mod 0` は**利用者が基準として決めた大きさ**に戻る。
+     gera の既定に戻るのではない——利用者の設定を壊す「戻す」は不具合である。 */
+  --font-size-view: 17px;
+  --font-size-edit: 16px;
+  --font-scale: 1;
+
   /* ゲラ＝校正刷り。地色は紙に寄せる。 */
   --bg:       #faf8f4;
   --fg:       #23211d;
@@ -34,6 +47,14 @@
     --zebra:   #201e1a;
   }
 }
+
+/* 編集モードの字の大きさ。**閲覧モードだけ拡大されるのでは往復が成立しない。**
+   editor.ts は CodeMirror の theme で `.cm-editor` に 16px を当てており、
+   その規則はクラス二つぶんの強さを持つ。**`#app` を前に置くのは、読み込み順に
+   依存せず確実に上回るためである**（theme の style 要素がどこに差し込まれるかは
+   CodeMirror 側の都合で、こちらから決められない）。
+   editor.ts の中の寸法はすべて em の相対指定なので、ここが動けば全体が比例する。 */
+#app .cm-editor { font-size: calc(var(--font-size-edit) * var(--font-scale)); }
 
 html, body, #app { height: 100%; margin: 0; }
 body { background: var(--bg); color: var(--fg); }

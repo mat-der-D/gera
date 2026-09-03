@@ -18,7 +18,9 @@ import * as viewer from "./viewer";
 import type { EditorView } from "@codemirror/view";
 import {
   copyToClipboard,
+  initialPath,
   loadSession,
+  openExternal,
   pickFileToOpen,
   pickPathToSave,
   readFile,
@@ -211,13 +213,13 @@ let scroller: HTMLElement | null = null;
  * 移ると本文もアプリも画面から消え、戻る手段が無いからである。そのうえで、
  *
  * - `#…` は同一文書内の見出しへ送る
- * - `http` と `https` は OS の既定ブラウザへ渡したい。**が、その経路が Rust 側に
- *   無い**——capability はファイル入出力とダイアログとクリップボードだけで、
- *   opener に当たる権限が入っていない。**踏めないことを黙るのが一番悪い**ので、
- *   URL をクリップボードに渡してそう言う
- * - それ以外（`file:` や別ファイルへの相対リンク）は**何もしない。**前者は
- *   渡さないことが要件そのもの（第7-4節 (d)）、後者は初版の対象外（第10節）で、
- *   どちらも「押しても動かない」が正しい振る舞いである
+ * - それ以外は Rust の `open_external` に渡す。**スキームをここで見ない。**
+ *   `http` と `https` だけを通す判断は Rust 側が持っている（第7-4節 (d)）。
+ *   同じ判断をこちらにも書くと、**フロントが守っているという誤解**を生む——
+ *   webview が乗っ取られれば invoke だけが直接飛ぶので、こちら側の検査は
+ *   一つも通らない。**判断の置き場所は一つでなければ、どちらが正かが消える。**
+ *   拒まれたぶん（`file:` や別ファイルへの相対リンク。後者は第10節の対象外）は
+ *   Rust 側が失敗を返し、それが下の帯に出る
  */
 function onLinkClick(e: MouseEvent): void {
   const link = e.target instanceof Element ? e.target.closest("a") : null;
@@ -234,11 +236,7 @@ function onLinkClick(e: MouseEvent): void {
     return;
   }
 
-  if (!/^https?:\/\//i.test(href)) return;
-  run("リンクの取り出し", async () => {
-    await copyToClipboard(href);
-    notify(`リンクはこの画面では開けません。URL をクリップボードにコピーしました:\n${href}`);
-  });
+  run("リンクを開く操作", () => openExternal(href));
 }
 
 function viewerElement(): HTMLElement {
@@ -287,6 +285,21 @@ function enterView(line: number): void {
   el.focus({ preventScroll: true });
 }
 
+/**
+ * 編集モードで `line`（0 始まり）を画面の先頭に置く。
+ *
+ * 隠している間や字の大きさを変えた直後は寸法が古いので、測り直してから寄せる。
+ */
+function scrollEditorToLine(v: EditorView, line: number): void {
+  v.requestMeasure();
+  const target = v.state.doc.line(Math.min(line + 1, v.state.doc.lines));
+  // cm は ensureEditor が必ず埋める。型の上で null を許しているだけである。
+  if (!cm) return;
+  v.dispatch({
+    effects: cm.EditorView.scrollIntoView(target.from, { y: "start", yMargin: 24 }),
+  });
+}
+
 /** 編集モードへ入る。閲覧モードで先頭に見えていた行を、そのまま先頭に置く（第9-3節）。 */
 async function enterEdit(): Promise<void> {
   const app = appElement();
@@ -295,15 +308,7 @@ async function enterEdit(): Promise<void> {
   if (scroller) scroller.hidden = true;
   app.hidden = false;
   mode = "edit";
-  // 隠している間に寸法が古くなっているので、測り直してから位置を合わせる。
-  v.requestMeasure();
-  const target = v.state.doc.line(Math.min(line + 1, v.state.doc.lines));
-  // cm は ensureEditor が必ず埋める。型の上で null を許しているだけである。
-  if (cm) {
-    v.dispatch({
-      effects: cm.EditorView.scrollIntoView(target.from, { y: "start", yMargin: 24 }),
-    });
-  }
+  scrollEditorToLine(v, line);
   v.focus();
 }
 
@@ -315,6 +320,90 @@ async function enterEdit(): Promise<void> {
 async function toggleMode(): Promise<void> {
   if (mode === "edit") enterView(view ? editorTopLine(view) : 0);
   else await enterEdit();
+}
+
+// -------------------------------------------------------------- 字の大きさ
+
+/**
+ * 版面の倍率（第9-4節）。
+ *
+ * **触るのは倍率（`--font-scale`）だけで、基準（`--font-size-view` /
+ * `--font-size-edit`）には一切触れない。**基準は利用者 CSS が決める場所である
+ * （第9-4節「種類 → ユーザー CSS」）。両方を一つの `font-size` に押し込むと、
+ * `Mod 0` が**利用者の決めた基準を消す**操作になる。二つに分けてある限り、
+ * `Mod 0` は「利用者が決めた大きさ」に戻るのであって、gera の既定には戻らない。
+ *
+ * 刻みはブラウザの拡大率（80/90/100/110/125/150…）に合わせた。**利用者が既に
+ * 指に入れている段階で、覚えるべき概念が増えない**（第4節の第二優先）。
+ * 100% の近傍を 10% 刻みにしてあるのは、これ以上細かいと一段押しても変わった
+ * 気がせず何度も押すことになり、これ以上粗いと「ちょっと大きく」が効かない
+ * ためである。離れるほど粗くするのは、大きい側では 10% の差が絶対値では
+ * 大きいからである。
+ *
+ * 上下を 67%〜200% で切ってあるのは、既定の 17px に対して 11px〜34px にあたる。
+ * これより小さいと日本語の漢字が潰れて読めず、これより大きいと 35em の行長
+ * （viewer.css）が画面に収まらなくなって、行長を保つという版面の前提が崩れる。
+ */
+const SCALES = [0.67, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
+/** 等倍の位置。`Mod 0` の戻り先であり、読めない設定が入っていたときの既定でもある。 */
+const UNIT = SCALES.indexOf(1);
+const SCALE_KEY = "gera:font-scale";
+
+/**
+ * 記憶した倍率を読む。**文書の内容ではなく利用者ごとの表示設定**なので、
+ * 退避（Rust 側）ではなく localStorage に置く。
+ *
+ * 読めないこと・壊れていることを普通に起こる事態として扱う。private window では
+ * 参照そのものが例外になり、中身は利用者が書き換えられる。**字の大きさごときで
+ * 起動を落とさない。**保存してある値そのものではなく最も近い段に寄せるのは、
+ * あとで刻みを変えても記憶が無効にならないようにするためである。
+ */
+function loadScaleIndex(): number {
+  let saved: number;
+  try {
+    saved = Number(localStorage.getItem(SCALE_KEY));
+  } catch {
+    return UNIT;
+  }
+  if (!Number.isFinite(saved) || saved <= 0) return UNIT;
+  let best = UNIT;
+  for (let i = 0; i < SCALES.length; i++) {
+    if (Math.abs(SCALES[i]! - saved) < Math.abs(SCALES[best]! - saved)) best = i;
+  }
+  return best;
+}
+
+let scaleIndex = loadScaleIndex();
+
+function applyFontScale(): void {
+  document.documentElement.style.setProperty("--font-scale", String(SCALES[scaleIndex] ?? 1));
+}
+
+/**
+ * 倍率を一段動かす（`step` が 0 なら等倍に戻す）。
+ *
+ * **変えた瞬間に版面が組み直され、いま読んでいた場所が上下にずれる。**
+ * モード切替と同じ手段——行番号を挟んで戻す（第9-3節）——で引き戻す。
+ * 常設の指標は置かない（第9節）。代わりに、他に手掛かりが無いので帯に一度だけ出す。
+ */
+function changeFontScale(step: number): void {
+  const next = step === 0 ? UNIT : Math.min(SCALES.length - 1, Math.max(0, scaleIndex + step));
+  if (next === scaleIndex) return;
+  scaleIndex = next;
+  const line =
+    mode === "view" ? (shown && scroller ? viewer.topLine(scroller) : 0) : view ? editorTopLine(view) : 0;
+  applyFontScale();
+  if (mode === "view") {
+    if (scroller && shown) viewer.scrollToLine(scroller, line);
+  } else if (view) {
+    scrollEditorToLine(view, line);
+  }
+  try {
+    localStorage.setItem(SCALE_KEY, String(SCALES[scaleIndex]));
+  } catch {
+    // 記憶できなくても、この起動の間は効いている。利用者の操作は成立しているので黙る。
+  }
+  notify(`文字の大きさ ${Math.round((SCALES[scaleIndex] ?? 1) * 100)}%`);
 }
 
 /**
@@ -345,6 +434,26 @@ window.addEventListener("keydown", (e) => {
     e.preventDefault();
     const shift = e.shiftKey;
     run(shift ? "名前を付けて保存" : "保存", () => saveFile(shift));
+    return;
+  }
+  // 字の大きさ（第9-4節）。**綴りが一つに定まらないので、両方から受ける。**
+  // `+` は多くの配列で Shift を伴い、そのとき e.key は配列によって `+` にも `;` にも
+  // なる。テンキーは Shift 無しで `+` を出すが e.code が別である。**e.key で意味を、
+  // e.code で位置を拾い、どちらかが当たれば通す。**`=` を受けるのは、Shift 無しでも
+  // 拡大できるほうが押しやすいためで、ブラウザも同じ扱いをしている。
+  if (key === "+" || key === "=" || e.code === "NumpadAdd" || e.code === "Equal") {
+    e.preventDefault();
+    changeFontScale(1);
+    return;
+  }
+  if (key === "-" || key === "_" || e.code === "NumpadSubtract" || e.code === "Minus") {
+    e.preventDefault();
+    changeFontScale(-1);
+    return;
+  }
+  if (key === "0" || e.code === "Numpad0") {
+    e.preventDefault();
+    changeFontScale(0);
     return;
   }
   // AI との対話に貼り直すための一括コピー（第11節）。Shift 無しの Mod-c は
@@ -381,9 +490,14 @@ function reportFontsWhenIdle(): void {
 reportFontsWhenIdle();
 
 refreshTitle();
+// 記憶した倍率は、最初に描く前に効かせる。あとから当てると版面を二度組むことになる。
+applyFontScale();
 
 /**
- * 退避を読み、着く先を決める。
+ * 着く先を決める。**コマンドライン引数が先で、退避はその次である**（第9-5節）。
+ *
+ * 引数で指されたファイルは「いま開けと言われたもの」であり、退避は「前回の続き」
+ * である。両方あるときに前回を優先する読み方は無い。
  *
  * **中身のある文書なら閲覧モードで見せる。**gera はほとんどビューアーである
  * （第1節）。**この経路では CodeMirror を一度も読まない。**
@@ -393,7 +507,28 @@ refreshTitle();
  * 状態になる。空の文書に対して利用者ができることは「書き始める」か「開く」
  * だけであり、前者は編集モードでしか行えない。
  */
-run("退避の読み込み", async () => {
+run("起動", async () => {
+  const startup = await initialPath();
+  if (startup.path) {
+    try {
+      text = await readFile(startup.path);
+      currentPath = startup.path;
+      refreshTitle();
+      enterView(0);
+      return;
+    } catch (e) {
+      // Rust 側は読めることを確かめてから渡してくるが、その後に消される経路は
+      // 残っている。ここで投げ直すと**どのモードにも入らないまま終わり、画面が
+      // 白いまま**になる。理由を出して、引数が無かったときと同じ道に落とす。
+      notify(`${startup.path} を開けませんでした: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  } else if (startup.error) {
+    notify(`指定されたファイルを開けませんでした: ${startup.error}`);
+  }
+
+  // **引数が開けなかったことは、退避を捨てる理由にならない。**退避はまだファイルに
+  // 書いていない本文であり、ここで空の文書を出すと、それが次の退避で上書きされて
+  // 消える。**失うものがある側に倒さない**（第9-6節と同じ規則）。
   const session = await loadSession();
   if (session?.text) {
     currentPath = session.path;

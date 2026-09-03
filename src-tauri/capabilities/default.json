@@ -1,13 +1,11 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "gera が必要とする最小の権限。ファイル入出力は自作コマンド (read_file / write_file) で行うため fs プラグインは含めない。core:window:allow-set-title は src/host.ts の setWindowTitle が使う。",
+  "description": "gera が必要とする最小の権限。ファイル入出力は自作コマンド (read_file / write_file) で行うため fs プラグインは含めない。ダイアログとリンクを開く操作も Rust 側 (pick_file_to_open / pick_path_to_save / open_external) で完結するため、dialog と opener の権限はフロントに与えない——与えると、選択したパスの登録や URL のスキーム検証をフロント側の申告に頼ることになり、webview が乗っ取られた時点で回避される (設計 第7-4節)。core:window:allow-set-title は src/host.ts の setWindowTitle が使う。",
   "windows": ["main"],
   "permissions": [
     "core:default",
     "core:window:allow-set-title",
-    "dialog:allow-open",
-    "dialog:allow-save",
     "clipboard-manager:allow-write-text",
     "window-state:default"
   ]

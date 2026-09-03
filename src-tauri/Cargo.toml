@@ -33,6 +33,10 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-clipboard-manager = "2"
+# http/https のリンクを OS の既定ブラウザへ渡すため（第7-4節 (d)、第9-1節）。
+# 呼ぶのは Rust 側だけである——スキームの検証をフロントに置くと、
+# webview が乗っ取られた時点で素通りになる。
+tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri-plugin-window-state = "2"

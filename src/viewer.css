@@ -26,7 +26,10 @@
   /* 1em = 全角一文字。日本語は 30〜40 字で折り返すのが読みやすい。 */
   max-width: 35em;
   margin: 0 auto;
-  font-size: 17px;
+  /* 基準（利用者 CSS が決める）× 倍率（Mod +/- が決める）。分けてある理由は
+     style.css の変数定義の側に書いた。**このファイルの他の寸法はすべて em で
+     書いてあるので、ここが動けば版面全体が比例して動く。** */
+  font-size: calc(var(--font-size-view) * var(--font-scale));
   line-height: 1.95;
   color: var(--fg);
   /* 長い URL や語で行が破綻しないようにするだけで、日本語の折り返しは既定に任せる。 */
@@ -57,24 +60,32 @@
    推定がずれる以上、位置合わせは一度では着かない。寄せ直しは viewer.ts の
    settle() が持つ。 */
 
+/* **推定は px ではなく em で置く。**字の大きさは基準と倍率の両方で動く
+   （.gera-doc の font-size）ので、px で固定すると**拡大したときだけ推定が
+   小さいまま残る。**画面外の文書が実際より短く見積もられ、スクロールバーの
+   長さが縮んで、送るたびに位置が跳ねる。em は自分の font-size に対する比なので、
+   基準を利用者 CSS が変えても倍率を Mod +/- が変えても、同じ比のまま付いてくる。
+   値は 17px 当時の px をその要素の font-size で割ったものである（下の h1 なら
+   52px ÷ 2em = 1.53em）。 */
+
 .gera-doc > * {
   content-visibility: auto;
-  contain-intrinsic-size: 110px;
-  contain-intrinsic-size: auto 110px;
+  contain-intrinsic-size: 6.5em;
+  contain-intrinsic-size: auto 6.5em;
 }
 /* 見出しは一行しかないので、段落と同じ推定を与えると文書が実際より長く見える。 */
-.gera-doc > h1 { contain-intrinsic-size: 52px; contain-intrinsic-size: auto 52px; }
-.gera-doc > h2 { contain-intrinsic-size: 46px; contain-intrinsic-size: auto 46px; }
+.gera-doc > h1 { contain-intrinsic-size: 1.53em; contain-intrinsic-size: auto 1.53em; }
+.gera-doc > h2 { contain-intrinsic-size: 1.8em; contain-intrinsic-size: auto 1.8em; }
 .gera-doc > h3,
 .gera-doc > h4,
 .gera-doc > h5,
-.gera-doc > h6 { contain-intrinsic-size: 34px; contain-intrinsic-size: auto 34px; }
+.gera-doc > h6 { contain-intrinsic-size: 1.8em; contain-intrinsic-size: auto 1.8em; }
 /* 箇条書き・コード・表・別行立ての数式は段落より背が高いほうに寄せる。 */
 .gera-doc > ul,
-.gera-doc > ol { contain-intrinsic-size: 160px; contain-intrinsic-size: auto 160px; }
-.gera-doc > pre { contain-intrinsic-size: 220px; contain-intrinsic-size: auto 220px; }
-.gera-doc > .gera-table { contain-intrinsic-size: 220px; contain-intrinsic-size: auto 220px; }
-.gera-doc > .gera-math { contain-intrinsic-size: 60px; contain-intrinsic-size: auto 60px; }
+.gera-doc > ol { contain-intrinsic-size: 9.4em; contain-intrinsic-size: auto 9.4em; }
+.gera-doc > pre { contain-intrinsic-size: 14.8em; contain-intrinsic-size: auto 14.8em; }
+.gera-doc > .gera-table { contain-intrinsic-size: 12.9em; contain-intrinsic-size: auto 12.9em; }
+.gera-doc > .gera-math { contain-intrinsic-size: 3.5em; contain-intrinsic-size: auto 3.5em; }
 /* 罫は実寸が分かっているので推定を要らなくする。 */
 .gera-doc > hr { content-visibility: visible; }
 

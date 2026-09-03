@@ -10,9 +10,13 @@
  *
  * ファイル入出力に fs プラグインを使わず Rust コマンドを通すのは、
  * 攻撃面を read_file と write_file の二つに絞るためでもある（第7節の sanitize の項）。
+ *
+ * **ダイアログとリンクを開く操作も Rust 側で行う**（第7-4節 (a)(d)）。フロント側の
+ * プラグインで開くと、選ばれたパスの登録も URL のスキーム検証もフロントの申告に
+ * 頼ることになり、webview が乗っ取られた時点で回避される。ここにあるのは
+ * 「開いてくれ」と頼む口だけで、**判断は一つも持っていない。**
  */
 import { invoke } from "@tauri-apps/api/core";
-import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
@@ -21,22 +25,55 @@ export interface Session {
   text: string;
 }
 
-const FILTERS = [{ name: "Markdown", extensions: ["md", "markdown", "mdown", "txt"] }];
-
 /** Tauri の中で動いているか。ブラウザ単体でも画面を確認できるようにするための判定。 */
 export const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 const SESSION_KEY = "gera:session";
 
+/**
+ * 開くダイアログ。**戻ってきたパスは、その時点で Rust 側の許可済み集合に入っている。**
+ * 呼び出し側は登録の面倒を見なくてよい（見る手段も無い。第7-4節 (a)）。
+ */
 export async function pickFileToOpen(): Promise<string | null> {
   if (!inTauri) return null;
-  const picked = await openDialog({ multiple: false, directory: false, filters: FILTERS });
-  return typeof picked === "string" ? picked : null;
+  return (await invoke<string | null>("pick_file_to_open")) ?? null;
 }
 
 export async function pickPathToSave(current: string | null): Promise<string | null> {
   if (!inTauri) return null;
-  return (await saveDialog({ defaultPath: current ?? "untitled.md", filters: FILTERS })) ?? null;
+  return (await invoke<string | null>("pick_path_to_save", { current })) ?? null;
+}
+
+/**
+ * 起動時にコマンドライン引数で渡されたファイル（第9-5節）。
+ *
+ * `path` が入っていれば、それは**存在して読めることを Rust 側が確かめ済み**で、
+ * 許可済み集合にも入っている——そのまま `readFile` に渡してよい。
+ * `error` は「引数はあったが開けなかった」ときの理由である。**両方が空**なら
+ * 引数が無かったということで、これまでどおり退避からの復元に進む。
+ */
+export interface Startup {
+  path: string | null;
+  error: string | null;
+}
+
+export async function initialPath(): Promise<Startup> {
+  if (!inTauri) return { path: null, error: null };
+  return invoke<Startup>("initial_path");
+}
+
+/**
+ * http / https のリンクを OS の既定ブラウザへ渡す（第7-4節 (d)、第9-1節）。
+ *
+ * **スキームの検証はここでしない。**Rust 側が http と https だけを通す。
+ * こちらで弾いても、webview が乗っ取られれば invoke だけが直接飛んでくる。
+ */
+export async function openExternal(url: string): Promise<void> {
+  if (!inTauri) {
+    window.open(url, "_blank", "noopener");
+    return;
+  }
+  await invoke<null>("open_external", { url });
 }
 
 export async function readFile(path: string): Promise<string> {
