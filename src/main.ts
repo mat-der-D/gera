@@ -360,8 +360,25 @@ window.addEventListener("keydown", (e) => {
 
 // -------------------------------------------------------------------- 起動
 
-// 第5節の要（書体でモードを示す）が成立しているかを、まず測って log に出す。
-reportFontResolution();
+/**
+ * 第5節の要（書体でモードを示す）が成立しているかを測って log に出す。
+ *
+ * **これは開発者向けの診断であって、利用者の目に入るものは何も作らない。**
+ * にもかかわらず、起動時にそのまま呼ぶと**実測で 68 ms を最初の描画の前に払う**
+ * （2,204 数式の文書、release ビルド、n=3 で 68/68/69 ms）。中身は 72px の
+ * canvas で明朝とゴシックを 8 回測るもので、**その場で両方の書体を読ませて
+ * 字形を組ませる**ため、この値になる。
+ *
+ * **描き終えてから測る。**診断の結果は console にしか出ないので、遅れて出ても
+ * 何も損なわれない。requestIdleCallback が無い実装のために setTimeout に落とす。
+ */
+function reportFontsWhenIdle(): void {
+  const idle = (window as { requestIdleCallback?: (cb: () => void) => void })
+    .requestIdleCallback;
+  if (idle) idle.call(window, reportFontResolution);
+  else window.setTimeout(reportFontResolution, 200);
+}
+reportFontsWhenIdle();
 
 refreshTitle();
 

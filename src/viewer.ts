@@ -19,6 +19,7 @@ import MarkdownIt from "markdown-it";
 import type { Env, MarkdownIt as MarkdownItInstance, Token } from "markdown-it";
 import DOMPurify from "dompurify";
 import katexModule from "@vscode/markdown-it-katex";
+import cjkFriendly from "markdown-it-cjk-friendly";
 // KaTeX の CSS とフォントは node_modules から取り込んで成果物に同梱する。
 // CSP が外部を許していない（第7-2節）ので CDN は使えない。viewer.css より先に
 // 置くのは、同じ強さの規則ならこちらの版面が後勝ちで上書きできるようにするため。
@@ -144,14 +145,19 @@ const taskLists = (md: MarkdownItInstance): void => {
  * 変換時には目印だけを置き、sanitize が済んでから実物に差し戻す。
  */
 interface MathEnv extends Env {
-  math?: string[];
+  math?: (() => string)[];
 }
 
-const SLOT = /<span data-math="(\d+)"><\/span>/g;
-
-function slot(env: MathEnv, html: string): string {
+/**
+ * 目印だけを置き、**KaTeX を呼ぶのは後回しにする。**
+ *
+ * 呼び出しを丸ごと閉包に包んで預ける。**画面外の数式を初回に組まないため**で、
+ * 費用の内訳は下の `fillMath` に書いた。閉包が握るのは markdown-it の token 配列と
+ * options だけで、これらは変換が済んだあと書き換わらない。
+ */
+function slot(env: MathEnv, make: () => string): number {
   const math = (env.math ??= []);
-  return `<span data-math="${math.push(html) - 1}"></span>`;
+  return math.push(make) - 1;
 }
 
 /**
@@ -164,7 +170,7 @@ function slot(env: MathEnv, html: string): string {
 const mathSlots = (md: MarkdownItInstance): void => {
   const rules = md.renderer.rules;
 
-  const capture = (name: string, wrap: (token: Token, html: string) => string): void => {
+  const capture = (name: string, wrap: (token: Token, index: number) => string): void => {
     const inner = rules[name];
     if (!inner) return;
     rules[name] = (tokens, idx, options, env, self) => {
@@ -174,16 +180,20 @@ const mathSlots = (md: MarkdownItInstance): void => {
       // 本文に出る。**ただし本人の数式文書に \label は 1 個も入っておらず
       // （第5-5節）、これは必要な処置ではなく**ほぼ無料の保険**である。
       token.content = token.content.replace(/\\label\s*\{[^}]*\}/g, "");
-      return slot(env ?? {}, wrap(token, inner(tokens, idx, options, env, self)));
+      return wrap(token, slot(env ?? {}, () => inner(tokens, idx, options, env, self)));
     };
   };
 
-  capture("math_inline", (_token, html) => html);
-  capture("math_inline_block", (_token, html) => html);
-  capture("math_inline_bare_block", (_token, html) => html);
-  capture("math_block", (token, html) => {
+  capture("math_inline", (_token, i) => `<span data-math="${i}"></span>`);
+  capture("math_inline_block", (_token, i) => `<span data-math="${i}"></span>`);
+  capture("math_inline_bare_block", (_token, i) => `<span data-math="${i}"></span>`);
+  // **別行立ての器は最初から本物を置く。**中身が空でも `.gera-math` が
+  // `.gera-doc` の直下に居れば、行番号（モード切り替えの位置合わせ）も
+  // `contain-intrinsic-size`（推定の高さ）も最初から効く。**空の span を置いて
+  // あとで div に差し替えると、その間だけ文書の高さが 175 個ぶん足りなくなる。**
+  capture("math_block", (token, i) => {
     const map = token.map ? ` data-line="${token.map[0]}" data-line-end="${token.map[1]}"` : "";
-    return `<div class="gera-math"${map}>${html}</div>`;
+    return `<div class="gera-math"${map} data-math="${i}"></div>`;
   });
 };
 
@@ -195,6 +205,26 @@ const md = new MarkdownIt({
   linkify: true, // GFM の自動リンク
   typographer: false, // 日本語では引用符の置換が邪魔にしかならない
 })
+  // **日本語の太字を直す。**CommonMark の delimiter run 規則では、閉じの `**` の
+  // すぐ内側が和文の約物（`。` `、` `）` `」`）だと閉じ記号として認められず、
+  // `**` が本文にそのまま出る。GitHub でも VS Code でも同じように壊れる。
+  //
+  // **本人の資産で実測した結果、これは例外ではなく普通の書き方である。**
+  // `~/Documents/dev` 配下の 72,610 ファイルに `**…[。、）」]**` の形が
+  // **83,297 箇所**あり、全 `**…**` 274,711 対の **30%** を占める。gera は
+  // 日本語の文書を読むためのビューアである（第1・3節）以上、放置できない。
+  //
+  // このプラグインは CommonMark への CJK 修正提案そのものの実装であり
+  // （https://github.com/commonmark/commonmark-spec/issues/650）、
+  // `md.inline.State` の `scanDelims` だけを差し替える。**規則を書き換えるのは
+  // `*` の側だけ**（markdown-it が `canSplitWord` を立てるのは `*` のときだけ）で、
+  // `_` の語中規則には触れない。作者は上記提案の提出者本人である。
+  //
+  // **既存の挙動を壊さないことを実測で確かめた。**本人の Markdown から無作為に
+  // 選んだ 2,997 ファイルを両方の設定で変換して比べたところ、`<strong>` は
+  // 1,942 対増え、**減ったファイルは 0、太字以外のタグ構成が変わったファイルも 0**
+  // だった。変換時間も findings.md で 120 → 114 ms と、測定の幅の中にある。
+  .use(cjkFriendly)
   .use(lineNumbers)
   .use(headingIds)
   .use(taskLists)
@@ -252,17 +282,49 @@ let lastText: string | null = null;
 let body: HTMLElement | null = null;
 
 /**
+ * Markdown を HTML にし、数式の「あとで組む」ぶんを一緒に返す。
+ *
+ * 全文と断片（局所編集）で経路を分けない——分ければ、そこだけ sanitize を
+ * 通し忘れうる。数式を実際に組むのは呼び出し側の役目である。
+ */
+function build(markdown: string): { html: string; math: (() => string)[] } {
+  const env: MathEnv = {};
+  const html = sanitize(md.render(markdown, env));
+  return { html, math: env.math ?? [] };
+}
+
+/**
+ * 目印一つを、実物の数式に差し替える。
+ *
+ * 別行立ては器（`.gera-math`）が既に正しい位置に居るので中身だけを入れる。
+ * 行中の数式は目印の span 自体が余分なので、KaTeX の出力ごと置き換える。
+ */
+function fill(el: HTMLElement, math: (() => string)[]): void {
+  const html = math[Number(el.dataset.math)]?.() ?? "";
+  delete el.dataset.math;
+  if (el.classList.contains("gera-math")) {
+    el.innerHTML = html;
+    return;
+  }
+  const box = document.createElement("template");
+  box.innerHTML = html;
+  el.replaceWith(box.content);
+}
+
+/**
  * Markdown の断片一つを HTML にする。全文と同じ変換器・同じ sanitize を通る。
  *
  * ブロック単位の局所編集で、直したブロックだけを描き直すためのもの。
- * 全文の描画と経路を分けない——分ければ、そこだけ sanitize を通し忘れうる。
  */
 export function renderFragment(markdown: string): string {
-  const env: MathEnv = {};
-  const html = sanitize(md.render(markdown, env));
-  const math = env.math;
-  if (!math) return html; // 数式が一つも無ければ差し戻しも要らない
-  return html.replace(SLOT, (_all, i: string) => math[Number(i)] ?? "");
+  const { html, math } = build(markdown);
+  if (!math.length) return html; // 数式が一つも無ければ差し戻しも要らない
+  // **断片はその場で全部組む。**局所編集で直したブロック一つを描き直すための
+  // 経路であり、待たせる相手が画面の前に居る。後回しにする画面外が無い。
+  const box = document.createElement("div");
+  box.innerHTML = html;
+  for (const el of box.querySelectorAll<HTMLElement>("[data-math]")) fill(el, math);
+  return box.innerHTML;
 }
 
 /**
@@ -283,9 +345,119 @@ export function renderInto(scroller: HTMLElement, text: string): void {
   }
   if (text === lastText) return;
   lastText = text;
+  const { html, math } = build(text);
   // トップレベルのブロックが .gera-doc の直下に平らに並ぶ。ブロック一つを
   // replaceWith で入れ替えても壊れない形にしておく（局所編集のため）。
-  body.innerHTML = renderFragment(text);
+  body.innerHTML = html;
+  fillMath(scroller, body, math);
+}
+
+// ------------------------------------------------------------ 数式の後回し
+
+/**
+ * 画面外の数式を、近づいてから組む。
+ *
+ * **これが閲覧モードで最も高くつく一手である。**2,838 行 / 2,204 数式の文書を
+ * release ビルドで測った内訳（JS の起動を 0 とした ms、n≥2 の代表値）:
+ *
+ * |                    | 数式あり | 数式を `<code>` に置換 |
+ * |---|---|---|
+ * | markdown-it ＋ KaTeX | 161 | 27 |
+ * | sanitize             |  74 | 62 |
+ * | `innerHTML`          |  53 |  7 |
+ * | **レイアウト**       | **523** | **72** |
+ * | 合計                 | 930 | 197 |
+ *
+ * **数式が 735 ms を占める。**そして初回に見えているのは 2,204 個のうち
+ * 十数個である。KaTeX の出力は 1 式あたり数十ノードあり（この文書全体で
+ * 60,325 要素・2.49 MB）、`content-visibility: auto` は画面外のレイアウトは
+ * 飛ばすが、**要素そのものを作る費用と、その様式を解く費用は飛ばさない。**
+ *
+ * したがって**組むのを遅らせる。**先頭の数ブロックは最初の描画に間に合わせ、
+ * 残りは IntersectionObserver で近づいたときに組む。**画面外のブロックは
+ * `contain-intrinsic-size` の推定で置かれているので、中身が入っても
+ * その時点では高さが変わらない**——だから後から組んでも版面は跳ねない。
+ *
+ * **文字の選択は失わない。**DOM から間引くのは数式の中身だけで、本文の
+ * ブロックは最初から全部そこに在る（仮想化ではない）。
+ */
+
+/**
+ * 最初の描画に間に合わせる、先頭のブロック数。
+ *
+ * **画面 1 枚ぶんで足りる。**残りの「近づいたら組む」ぶんも、実際には最初の
+ * 描画に間に合う——IntersectionObserver の初回通知はその場のレイアウトの直後・
+ * ペイントの手前に届き、`AHEAD` の 200% ぶんまでがそこで組まれるからである。
+ * **ここで先に組むのは、その通知を待たずに最初の一画面を確定させるためだけ**で、
+ * それより多く組んでも、後から捨てる仕事を前倒しするだけになる。
+ *
+ * **実測で決めた。**release ビルド、x11 の計測ハーネス（絶対値は実環境より
+ * 過大に出る）、`WEBKIT_DISABLE_DMABUF_RENDERER=1`、条件を交互に回して
+ * 本文が現れるまでの時間の中央値:
+ *
+ * | EAGER | findings.md（2,838 行 / 2,204 数式、n=7） | rejected.md（956 行、n=5） |
+ * |---|---|---|
+ * | 0     |  714 ms |  683 ms |
+ * | **8** | **629 ms** | **662 ms** |
+ * | 20    |  695 ms |  689 ms |
+ * | 40    |  725 ms |  724 ms |
+ * | 60    |  725 ms |    －    |
+ * | 全部（後回しをやめる） | **1,300 ms** | **867 ms** |
+ *
+ * **後回しそのものが 671 ms を削る。**先頭を何ブロック組むかはその中の
+ * 100 ms 程度の差でしかないが、**多すぎても少なすぎても遅くなる**——0 だと
+ * 通知を待つぶん一手増え、20 以上だと画面外まで組んでしまう。**両方の文書で
+ * 8 が底だった。**
+ */
+const EAGER = 8;
+
+/** 近づいたと見なす距離。画面 2 枚ぶん手前から組み始める。 */
+const AHEAD = "200% 0px";
+
+/** まだ組んでいない数式。ブロックごとにまとめる（本文を描き直すたびに作り直す）。 */
+let pending = new Map<HTMLElement, HTMLElement[]>();
+let pendingMath: (() => string)[] = [];
+let watching: IntersectionObserver | null = null;
+
+/** ブロック一つぶんの数式を今すぐ組む。持っていなければ何もしない。 */
+function fillBlock(top: HTMLElement): void {
+  const slots = pending.get(top);
+  if (!slots) return;
+  pending.delete(top);
+  watching?.unobserve(top);
+  for (const el of slots) fill(el, pendingMath);
+}
+
+function fillMath(scroller: HTMLElement, body: HTMLElement, math: (() => string)[]): void {
+  watching?.disconnect();
+  watching = null;
+  pending = new Map();
+  pendingMath = math;
+  if (!math.length) return;
+
+  // 目印を、それが属する「.gera-doc 直下のブロック」ごとにまとめる。
+  // 後回しの単位をブロックにするのは、content-visibility が働く単位が
+  // ここだからである（viewer.css）。
+  for (const el of body.querySelectorAll<HTMLElement>("[data-math]")) {
+    let top: HTMLElement = el;
+    while (top.parentElement && top.parentElement !== body) top = top.parentElement;
+    const found = pending.get(top);
+    if (found) found.push(el);
+    else pending.set(top, [el]);
+  }
+  if (!pending.size) return;
+
+  // 先頭のぶんは、最初の描画に間に合わせるためその場で組む。
+  for (const top of Array.from(body.children).slice(0, EAGER)) fillBlock(top as HTMLElement);
+  if (!pending.size) return;
+
+  watching = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) if (entry.isIntersecting) fillBlock(entry.target as HTMLElement);
+    },
+    { root: scroller, rootMargin: AHEAD },
+  );
+  for (const top of pending.keys()) watching.observe(top);
 }
 
 // ------------------------------------------------------------ 位置合わせ
@@ -302,7 +474,7 @@ const MARGIN = 24;
  * 本物に置き換わっていくので数回で収まる。**回数を切ってあるのは、末尾付近など
  * これ以上スクロールできない場所では誤差が残り続けて止まらないためである。**
  */
-function settle(scroller: HTMLElement, target: HTMLElement): void {
+function nudge(scroller: HTMLElement, target: HTMLElement): void {
   for (let i = 0; i < 8; i++) {
     const offset =
       target.getBoundingClientRect().top - scroller.getBoundingClientRect().top - MARGIN;
@@ -311,6 +483,20 @@ function settle(scroller: HTMLElement, target: HTMLElement): void {
     scroller.scrollTop = before + offset;
     if (scroller.scrollTop === before) return; // 端に着いた
   }
+}
+
+function settle(scroller: HTMLElement, target: HTMLElement): void {
+  nudge(scroller, target);
+  // **飛んだ先で、後回しにしていた数式が組まれる。**近づいたことに気付くのは
+  // IntersectionObserver で、それが動くのは次のフレームの描画手前である
+  // （fillMath）。飛んだ先より上のブロックに数式が入ると、そのぶん目的の要素が
+  // 下へ押される。**組み終わってからもう一度だけ寄せ直す。**
+  // rAF を二段にしているのは、監視の通知が rAF より後に来るためである。
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      if (target.isConnected) nudge(scroller, target);
+    });
+  });
 }
 
 /** 画面の上端にいちばん近い、行番号を持つ要素。無ければ null。 */
