@@ -16,6 +16,16 @@ rust-version = "1.77.2"
 name = "gera_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+# **素の `cargo build --release` はリリース版にならない。**この feature が
+# 立っていないと tauri は dev 扱いになり、frontendDist を埋め込まず
+# devUrl（localhost:5173）を見に行く——実測で、素のビルドの成果物は
+# 「Could not connect to localhost」の画面しか出さなかった。
+# `tauri build` は自分で有効化するので影響を受けないが、
+# cargo を直接叩く経路（測定など）はこの宣言が無いと立てようがない。
+# Tauri のテンプレートには最初から入っている。
+custom-protocol = ["tauri/custom-protocol"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -26,3 +36,15 @@ tauri-plugin-clipboard-manager = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri-plugin-window-state = "2"
+
+# 起動速度が第一優先（設計 第 4 節）で、コールド起動の差の大半は
+# バイナリの読み込み量に由来する（第 5-1 節）。したがって release は
+# サイズを削る方向で組む。Rust 側は起動時のファイル読みと IPC の
+# 取り回しだけで、重い計算は WebKitGTK の中にあるため、
+# opt-level を落としても動作速度には効かない。
+[profile.release]
+opt-level = "s"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
