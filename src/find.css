@@ -1,0 +1,88 @@
+/* 文書内検索の見た目（設計 第9-2節）。
+   find.ts からのみ import される。**`Mod+F` を押すまで読み込まれない**ので、
+   起動時の費用にならない（第4節の第一優先）。
+
+   **ここに現れるクラス名は公開 API である**（第9-4節）。名前を変えるときは
+   docs/CSS.md も直すこと。
+
+   **本文を覆わない。**見出し一覧（outline.css）は覆いを敷いて本文の上に重ねるが、
+   検索は当たった箇所を見ながら使う道具なので、同じ形にしてはならない。画面の
+   右下に小さく置く——**飛び先は画面の上端に来る**（viewer.ts の MARGIN）ので、
+   下に居れば、いま当たった箇所を隠すことがない。
+
+   **寸法はすべて rem で書く。**`--font-scale`（`Mod +/-`）が動かすのは版面で
+   あって道具ではない（outline.css と同じ理由）。
+
+   **アニメーションを持たせない。**出入りに移り変わりを付けると、そのあいだ毎
+   フレーム描画が走る。アイドル時に 60fps でフレームが出る不具合を直したばかりで
+   （第5-10節、style.css のスクロールバー）、同じ費用をここで払い直さない。 */
+
+.gera-find {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.4rem 0.8rem;
+  box-sizing: border-box;
+  /* 狭い窓でも画面からはみ出さない。 */
+  max-width: calc(100vw - 2rem);
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  /* 本文の上に浮いていることを示す。覆いが無いぶん、影が唯一の手掛かりになる。 */
+  box-shadow: 0 0.3rem 1.2rem color-mix(in srgb, var(--fg) 18%, transparent);
+}
+
+.gera-find-input {
+  /* 道具の文字はゴシック。明朝で組まれるのは本文だけで、それがモード表示でもある（第5節）。 */
+  font: 0.95rem/1.6 var(--font-sans);
+  color: var(--fg);
+  background: none;
+  border: 0;
+  outline: none;
+  width: 14rem;
+  /* 窓が狭いときは件数のぶんを残して縮む。 */
+  min-width: 0;
+}
+.gera-find-input::placeholder { color: var(--dim); }
+
+/* 「3 / 47」。**数字が動いても幅が動かないようにする**——桁が変わるたびに
+   入力欄まで左右に揺れると、打っている最中に目が引っ張られる。 */
+.gera-find-count {
+  font: 0.85rem/1.6 var(--font-sans);
+  color: var(--dim);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  min-width: 5.5rem;
+  text-align: right;
+}
+
+/* 一件も無いことは、件数と同じ場所で言う。色を変えるのは、0 件と「1 / 47」を
+   一目で見分けるためだけである。 */
+.gera-find-none { color: var(--accent); }
+
+/* ------------------------------------------------------------ 当たりの強調 */
+
+/* **本文の DOM を書き換えずに色を付ける**（CSS Custom Highlight API）。
+   `<mark>` で包む方式だと、`data-line` の対応（第6節）も `renderFragment` に
+   よる差し替え（局所編集）も、包んだぶんだけ形が変わって壊れる。**強調は
+   見た目の層だけで完結させる。**
+
+   閲覧モードだけの仕組みである。編集モードでは当たりを CodeMirror の選択範囲で
+   示す（main.ts）——エディタは行を仮想化していて、画面外の行は DOM に無いので、
+   Range を作っても保たない。 */
+
+/* それ以外の当たり。**選んでいる一件と見分けが付けばよく、読む邪魔をしない濃さ**に
+   留める。地色だけを変えて字の色には触らない。 */
+::highlight(gera-find) {
+  background-color: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+/* いま選んでいる一件。ブラウザの検索と同じで、**ここだけは目に飛び込む**こと。 */
+::highlight(gera-find-current) {
+  background-color: var(--accent);
+  color: var(--bg);
+}

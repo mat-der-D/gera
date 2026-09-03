@@ -29,6 +29,9 @@ import {
   writeFile,
 } from "./host";
 import { reportFontResolution } from "./fonts";
+// 型だけを取る。**実体は動的 import でしか読まない**ので、起動時の初期チャンクに
+// 検索の UI は入らない（下の toggleFind）。
+import type { FindMatch } from "./find";
 
 /** 本文の正。CodeMirror が居ない起動があるので、置き場をそちらに預けない。 */
 let text = "";
@@ -382,6 +385,62 @@ async function toggleOutline(): Promise<void> {
   });
 }
 
+/**
+ * 文書内を検索する（第9-2節、第14節の実装順序 6）。`Mod+F` で出す。
+ *
+ * **見出し一覧と対になる道具である。**一覧が「章から探す」もの、検索が
+ * 「語から探す」もので、どちらも本人側の痛み（第2節）に効く。
+ *
+ * **見出し一覧と同じく、編集モードでも同じキーが同じ意味を持つ**（第4節の
+ * 第二優先）。`Mod+F` は CodeMirror の既定 keymap に無い（`@codemirror/search`
+ * を入れていない）ので、window で受けても取り合いにならない。**入れない理由は、
+ * 見た目と操作がもう一つ増えるからである**——本文の文字列を探して行番号で飛ぶ
+ * という同じ仕組みで、両モードを賄える。
+ *
+ * 探す対象は**本文の正**（このファイルの `text`）である。編集モードでは打った
+ * 直後の本文がまだ描画に反映されておらず、閲覧モードでは画面外のブロックが
+ * まだ組まれていない（viewer.ts の EAGER）。**どちらの事情にも巻き込まれない
+ * 側を見る**のは、見出し一覧がトークンから見出しを取るのと同じ判断である。
+ */
+let find: typeof import("./find") | null = null;
+
+/**
+ * 当たりへ飛んで見せる。**焦点は検索の入力欄に残したままにする**
+ * ——`Enter` を続けて押して次々に送れることが要件だからである
+ * （`jumpToLine` は焦点を本体へ返すので、ここでは使わない）。
+ */
+function showMatch(query: string, at: FindMatch): void {
+  if (mode === "view") {
+    if (scroller && shown && find) find.showInView(scroller, query);
+  } else if (view && cm) {
+    // **編集モードでは CodeMirror の選択範囲で示す。**エディタは画面外の行を
+    // DOM に持たないので、閲覧モード側の強調（CSS Custom Highlight API）は
+    // そのままでは保たない。選択範囲なら本文にも触れず、既にある仕組みで足りる。
+    view.dispatch({
+      selection: { anchor: at.index, head: at.index + query.length },
+      // 当たりは行ではなく点なので、上端に置くより中ほどのほうが前後が見える。
+      effects: cm.EditorView.scrollIntoView(at.index, { y: "center" }),
+    });
+  }
+}
+
+async function toggleFind(): Promise<void> {
+  const ui = (find ??= await import("./find"));
+  // 開いているときの `Mod+F` は、閉じるのではなく**打ち直せる状態に戻す。**
+  // ブラウザと同じ振る舞いなので、覚えることが増えない（第4節の第二優先）。
+  if (ui.isOpen()) {
+    ui.refocus();
+    return;
+  }
+  ui.open({
+    text,
+    from: currentLine(),
+    show: showMatch,
+    clear: ui.clearInView,
+    restore: focusCurrent,
+  });
+}
+
 // -------------------------------------------------------------- 字の大きさ
 
 /**
@@ -482,12 +541,22 @@ window.addEventListener("keydown", (e) => {
   // 見出しの一覧を出したまま別の操作をしたら、その一覧はもう用済みである
   // （`Mod+Shift+O` 自身だけは、出し入れの切り替えなので通す）。
   if (outline?.isOpen() && !(key === "o" && e.shiftKey)) outline.close();
+  // 検索も同じ扱いにする。`Mod+F` 自身だけは通す（開いていれば入力欄へ戻る）。
+  if (find?.isOpen() && key !== "f") find.close();
 
   // 見出しへ飛ぶ（第9-2節）。VS Code の「ファイル内のシンボルへ移動」と同じ綴りに
   // 揃えてある——**既に指に入っている操作なら、覚えることが増えない**（第4節）。
   if (key === "o" && e.shiftKey) {
     e.preventDefault();
     run("見出しの一覧", toggleOutline);
+    return;
+  }
+
+  // 文書内を検索する（第9-2節）。**preventDefault が要る**——webview に渡すと
+  // ブラウザ既定の検索に奪われ、そちらは段階的描画のせいで画面外を見つけられない。
+  if (key === "f") {
+    e.preventDefault();
+    run("文書内検索", toggleFind);
     return;
   }
 
