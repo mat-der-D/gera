@@ -134,12 +134,20 @@ let lastTitle: string | null = null;
  * dirty からしか決まらず、その大半では変わらない。だから最後に送った文字列を憶えて
  * おき、実際に変わったときだけ送る。
  */
+let titleQueue: Promise<void> = Promise.resolve();
+
 function refreshTitle(): void {
   const name = currentPath ? baseName(currentPath) : "無題";
   const title = `${dirty ? "• " : ""}${name} — gera`;
   if (title === lastTitle) return;
   lastTitle = title;
-  run("タイトルの更新", () => setWindowTitle(title));
+  // **順に流す。**setWindowTitle は IPC なので、投げっぱなしだと到着順が
+  // 保証されない。実測（2026-09-04、WAYLAND_DEBUG）で、JS 側が
+  // 「無題 → probe.md」の順に送ったものが「probe.md → 無題」の順で届き、
+  // **正しいタイトルが誤ったタイトルに上書きされていた。**
+  titleQueue = titleQueue
+    .then(() => setWindowTitle(title))
+    .catch((e: unknown) => console.error("[gera] タイトルの更新に失敗", e));
 }
 
 let stashTimer: number | undefined;
