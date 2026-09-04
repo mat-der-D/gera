@@ -1,0 +1,26 @@
+/* ゴシック体の版面。
+ *
+ * 何をするものか: 本文の書体を明朝からゴシックに替える。**明朝が読みづらい人
+ * 向けである**（設計文書 第3節）。ゴシックは明朝より字面が大きく、同じ行間だと
+ * 詰まって見えるので、行間だけ少し足してある。
+ *
+ * 使い方: このファイルを `user.css` という名前で次の場所へ置く。
+ *   Linux   ~/.config/dev.smoothpudding.gera/user.css
+ *   Windows %APPDATA%\dev.smoothpudding.gera\user.css
+ * 置いたあと gera で Ctrl+, を押せば、起動し直さずに反映される。
+ * 二つ以上のプリセットを使いたければ、中身をつなげて一つの user.css にすればよい。
+ */
+
+:root {
+  /* --font-serif は「明朝を入れる変数」ではなく「**本文の書体**を入れる変数」である。
+     ここにゴシックを入れれば本文がゴシックになる（docs/CSS.md）。
+     配布先ごとに実在する書体が違うのでスタックで書く。Windows には Noto CJK が
+     無く、游ゴシックが標準搭載である。 */
+  --font-serif: "Yu Gothic", YuGothic, "Noto Sans CJK JP", "Noto Sans JP",
+                "Hiragino Sans", "Hiragino Kaku Gothic ProN", Meiryo, sans-serif;
+}
+
+.gera-doc {
+  /* 既定は 1.95。ゴシックのぶんだけ広げる。 */
+  line-height: 2.1;
+}

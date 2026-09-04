@@ -24,6 +24,7 @@ import {
   pickFileToOpen,
   pickPathToSave,
   readFile,
+  readUserCss,
   saveSession,
   setWindowTitle,
   writeFile,
@@ -150,6 +151,8 @@ async function ensureEditor(app: HTMLElement): Promise<EditorView> {
   if (view) return view;
   const [cmView, editor] = await Promise.all([import("@codemirror/view"), import("./editor")]);
   cm = cmView;
+  // 遅れて入った CSS より後ろへ、利用者 CSS を押し戻す。
+  raiseUserCss();
   // 本文を入れると updateListener が走って dirty が立つ。中身を移しただけで
   // 「変更あり」にはしない——保存していない状態かどうかは text 側の履歴で決まる。
   const was = dirty;
@@ -343,10 +346,12 @@ function focusCurrent(): void {
 }
 
 /**
- * 指定した行を画面の先頭に置く。**閲覧モードでも編集モードでも同じ意味になる**
- * ——アウトラインが飛び先として知っているのは行番号だけである。
+ * 指定した行を画面の先頭に置き直す。**閲覧モードでも編集モードでも同じ意味になる**
+ * ——位置を渡し合う手段は行番号ひとつに揃えてある（第9-3節）。**焦点は動かさない。**
+ * 版面が組み直される操作（字の大きさ、利用者 CSS の読み直し）は、いま焦点が
+ * どこにあっても——検索の入力欄にあっても——読んでいた場所だけを戻したいからである。
  */
-function jumpToLine(line: number): void {
+function restoreLine(line: number): void {
   if (mode === "view") {
     // 閲覧モードは `content-visibility: auto` で画面外の高さが推定値なので、
     // 一度寄せただけでは着かない。寄せ直しは viewer.ts の settle が持つ。
@@ -354,6 +359,14 @@ function jumpToLine(line: number): void {
   } else if (view) {
     scrollEditorToLine(view, line);
   }
+}
+
+/**
+ * 指定した行を画面の先頭に置き、焦点をいまのモードの本体へ返す。
+ * **アウトラインや検索から飛ぶとき**のように、道具を閉じて読みに戻る経路で使う。
+ */
+function jumpToLine(line: number): void {
+  restoreLine(line);
   focusCurrent();
 }
 
@@ -373,6 +386,8 @@ let outline: typeof import("./outline") | null = null;
 
 async function toggleOutline(): Promise<void> {
   const ui = (outline ??= await import("./outline"));
+  // outline.css は動的 import で遅れて入る。利用者 CSS をその後ろへ押し戻す。
+  raiseUserCss();
   if (ui.isOpen()) {
     ui.close();
     return;
@@ -426,6 +441,8 @@ function showMatch(query: string, at: FindMatch): void {
 
 async function toggleFind(): Promise<void> {
   const ui = (find ??= await import("./find"));
+  // find.css も遅れて入る（toggleOutline と同じ理由）。
+  raiseUserCss();
   // 開いているときの `Mod+F` は、閉じるのではなく**打ち直せる状態に戻す。**
   // ブラウザと同じ振る舞いなので、覚えることが増えない（第4節の第二優先）。
   if (ui.isOpen()) {
@@ -511,17 +528,108 @@ function changeFontScale(step: number): void {
   scaleIndex = next;
   const line = currentLine();
   applyFontScale();
-  if (mode === "view") {
-    if (scroller && shown) viewer.scrollToLine(scroller, line);
-  } else if (view) {
-    scrollEditorToLine(view, line);
-  }
+  restoreLine(line);
   try {
     localStorage.setItem(SCALE_KEY, String(SCALES[scaleIndex]));
   } catch {
     // 記憶できなくても、この起動の間は効いている。利用者の操作は成立しているので黙る。
   }
   notify(`文字の大きさ ${Math.round((SCALES[scaleIndex] ?? 1) * 100)}%`);
+}
+
+// -------------------------------------------------------------- 利用者 CSS
+
+/**
+ * 利用者が書いた CSS を差し込む（第9-4節、第14節の実装順序 7）。
+ *
+ * **設定画面は作らない**（第9-4節。友人は CSS が書ける）。置き場は Rust 側が
+ * 決め打ちで持っており、こちらから読み先を指定する手段は無い（host.ts の
+ * `readUserCss`）。**ほとんどの起動でファイルは無い**ので、無いことは失敗として
+ * 扱わない。
+ *
+ * 差し込み先を `<head>` の末尾にするのは、**同じ強さの規則なら後に書いたほうが
+ * 勝つ**からである。gera 自身の CSS（style.css / viewer.css / katex）は静的
+ * import で、このコードが動く前にすべて `<head>` へ入っている。したがって
+ * `append` するだけで、利用者は `:root { --font-serif: … }` のような素直な
+ * 書き方で上書きできる——`!important` を強いるのは、書く側に余計な知識を
+ * 求めることになる。
+ */
+let userStyle: HTMLStyleElement | null = null;
+
+function applyUserCss(css: string | null): void {
+  if (css === null) {
+    // ファイルが消されたあとに読み直したときは、前回のぶんも消える必要がある。
+    userStyle?.remove();
+    userStyle = null;
+    return;
+  }
+  if (!userStyle) {
+    userStyle = document.createElement("style");
+    userStyle.id = "gera-user-css";
+  }
+  // **文字列としてだけ扱う。**CSS から JS は動かない（CSP の default-src 'self' が
+  // script を止め、`content: url(…)` のような外部参照は img-src が塞ぐ）ので、
+  // ここで中身を検査しても防げるものが増えない。構文が壊れていれば、その規則が
+  // 落ちるだけである——CSS のパーサは壊れた規則を読み飛ばして先へ進む。
+  userStyle.textContent = css;
+  document.head.append(userStyle);
+}
+
+/**
+ * 利用者 CSS を `<head>` の末尾へ戻す。
+ *
+ * **遅れて読まれる CSS があるからである。**見出しの一覧・検索・編集モードは
+ * 動的 import なので、その中の CSS は利用者 CSS より**後**に `<head>` へ入る。
+ * そのままだと `.gera-outline-item` のような規則を利用者が上書きできない
+ * （同じ強さなら後勝ちである）。読み込んだ直後に押し戻せば、順序は保たれる。
+ */
+function raiseUserCss(): void {
+  if (userStyle) document.head.append(userStyle);
+}
+
+/**
+ * 起動時の読み込み。**待たずに投げる。**
+ *
+ * 起動速度は第一優先である（第4節）。ここで `await` を挟むと、その一往復ぶん
+ * 最初の描画が遅れる。**モジュールの評価と同時に投げておき**、`initial_path` や
+ * ファイル読み込みと並行させれば、待ち時間は事実上ゼロになる。
+ *
+ * それでも**描く前には効かせる**（起動処理の中で一度だけ `await` する）。
+ * 描いたあとに当てると版面を二度組むことになり、そちらのほうが高くつく。
+ */
+const userCssAtStart: Promise<void> = (async () => {
+  try {
+    applyUserCss((await readUserCss()).css);
+  } catch (e: unknown) {
+    // 読めなかったこと（権限など）は黙らない。ただし起動は止めない——
+    // 見た目の設定ごときで文書が読めなくなるほうが損である。
+    console.error("[gera] 利用者 CSS を読めなかった", e);
+    notify(`利用者 CSS を読めませんでした: ${e instanceof Error ? e.message : String(e)}`);
+  }
+})();
+
+/**
+ * 利用者 CSS を読み直す（`Mod+R`）。
+ *
+ * **本人の使い方に必須である**——Claude Code に CSS を書かせて調整する想定なので
+ * （第9-4節）、書き換えるたびに gera を起動し直すのでは往復が成立しない。
+ *
+ * **ファイル監視で自動的に追随はしない。**外部からの書き換えへの追随は第9-6節の
+ * 論点で、まだ決まっていない。ここで先取りすると、決めるべきことが暗黙に決まる。
+ *
+ * 版面が組み直されると読んでいた場所が上下にずれるので、字の大きさを変えたときと
+ * 同じ手段——行番号を挟んで戻す（第9-3節）——で引き戻す。
+ */
+async function reloadUserCss(): Promise<void> {
+  const { path, css } = await readUserCss();
+  const line = currentLine();
+  applyUserCss(css);
+  restoreLine(line);
+  // **どちらの結果も帯に出す。**画面が変わらなかったとき、それが「反映された結果
+  // 同じ見た目だった」のか「ファイルが無くて何も起きなかった」のかを、
+  // 利用者が区別できる必要がある。置き場そのものを出すのは、設定画面が無い以上
+  // 「どこに置けばよいか」を伝える場所が他に無いからである。
+  notify(css === null ? `利用者 CSS がありません: ${path}` : `利用者 CSS を読み直しました: ${path}`);
 }
 
 /**
@@ -563,6 +671,18 @@ window.addEventListener("keydown", (e) => {
   if (key === "e") {
     e.preventDefault();
     run("モードの切り替え", toggleMode);
+    return;
+  }
+  // 利用者 CSS を読み直す（第9-4節）。**`Mod+,` は多くの editor（VS Code、Zed）で
+  // 「設定」を開く綴りであり、gera にとっての設定は user.css ただ一つである**
+  // ——既に指に入っている操作なら、覚えることが増えない（第4節の第二優先）。
+  // `Mod+R` は文書そのものの読み直しに取ってある（第9-6節）。`Mod+Shift+R` は
+  // ブラウザの「強制再読み込み」と紛らわしい。`Mod+Shift+U` は ibus と GTK が
+  // Unicode 入力に使うため、編集モードだけ奪われて振る舞いが揃わない。
+  // 綴りが一つに定まらないので、字の大きさと同じく e.key と e.code の両方から拾う。
+  if (key === "," || e.code === "Comma") {
+    e.preventDefault();
+    run("利用者 CSS の読み直し", reloadUserCss);
     return;
   }
   if (key === "o" && !e.shiftKey) {
@@ -649,6 +769,9 @@ applyFontScale();
  */
 run("起動", async () => {
   const startup = await initialPath();
+  // **描く前に効かせる。**投げたのはモジュールの評価時なので、ここに着く頃には
+  // 大抵もう済んでいる（上の userCssAtStart）。
+  await userCssAtStart;
   if (startup.path) {
     try {
       text = await readFile(startup.path);

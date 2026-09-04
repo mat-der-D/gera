@@ -115,6 +115,28 @@ export async function copyToClipboard(text: string): Promise<void> {
 }
 
 /**
+ * 利用者 CSS（第9-4節、第14節の実装順序 7）。
+ *
+ * **パスを渡さない。**`readFile` は「利用者が自ら指し示したパスだけ」を通す
+ * 仕組み（第7-4節 (a)）で、`user.css` はその集合に入らない。Rust 側に
+ * **引数を取らない専用の口**を置き、置き場の決定はそちらに閉じてある。
+ * ここから読み先を指定する手段は無い——**無いことが、この仕組みの要である。**
+ *
+ * `css` が `null` なのは「ファイルが無かった」ときで、これは失敗ではない。
+ * 読めなかったときだけ例外になる。`path` は**どこに置けばよいかを利用者へ
+ * 伝えるため**に必ず返る（設定画面を作らないので、他に伝える場所が無い）。
+ */
+export interface UserCss {
+  path: string;
+  css: string | null;
+}
+
+export async function readUserCss(): Promise<UserCss> {
+  if (!inTauri) return { path: "", css: null };
+  return invoke<UserCss>("read_user_css");
+}
+
+/**
  * ウィンドウのタイトル。
  *
  * 第5節が禁じているのは**ウィンドウの中身**に常設 UI を置くことである。

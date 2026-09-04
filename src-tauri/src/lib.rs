@@ -268,6 +268,49 @@ fn save_session(app: AppHandle, session: Session) -> Result<(), String> {
     fs::write(&path, raw).map_err(|e| format!("退避を書けなかった: {e}"))
 }
 
+/// 利用者 CSS の置き場（第9-4節、第14節の実装順序 7）。
+///
+/// **引数を取らない。**`read_file` は「利用者が自分の手で指し示したパスだけ」を
+/// 受ける仕組み（第7-4節 (a)）であり、`user.css` はその集合に入らない。かといって
+/// 集合に入れてしまうと、利用者が指していないパスが許可済みになる。**だから
+/// 専用の口を作り、その口は決め打ちの一箇所しか読まない**——フロントから
+/// パスを渡せない以上、この口を乗っ取っても読める先は増えない。
+fn user_css_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| format!("アプリの設定置き場が決まらなかった: {e}"))?;
+    Ok(dir.join("user.css"))
+}
+
+/// 利用者 CSS の中身と、その置き場。
+///
+/// **`path` を必ず返す。**設定画面を作らない（第9-4節）以上、「どこに置けばよいか」を
+/// 利用者へ伝える手段が他に無い。読み直しの通知に出す。
+#[derive(Debug, Serialize)]
+struct UserCss {
+    path: String,
+    css: Option<String>,
+}
+
+/// 利用者 CSS を読む。**無いことは失敗ではない。**
+///
+/// ほとんどの起動でこのファイルは存在しない。存在しないことを Err にすると、
+/// 起動のたびに帯が出るか、フロント側で「この失敗だけは無視する」判定を
+/// 書くことになる。**「無い」と「読めなかった」を型で分ける**（`css: None` と Err）。
+#[tauri::command]
+fn read_user_css(app: AppHandle) -> Result<UserCss, String> {
+    let path = user_css_path(&app)?;
+    let display = path.to_string_lossy().into_owned();
+    match fs::read_to_string(&path) {
+        Ok(css) => Ok(UserCss { path: display, css: Some(css) }),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            Ok(UserCss { path: display, css: None })
+        }
+        Err(e) => Err(format!("{display} を読めなかった: {e}")),
+    }
+}
+
 /// 起動している IME デーモンを `/proc/*/comm` から見て、GTK のモジュール名を決める。
 ///
 /// デスクトップ環境ごとの設定ファイルを読みに行くより、
@@ -394,7 +437,8 @@ pub fn run() {
             initial_path,
             open_external,
             load_session,
-            save_session
+            save_session,
+            read_user_css
         ])
         .run(tauri::generate_context!())
         .expect("gera の起動に失敗した");
