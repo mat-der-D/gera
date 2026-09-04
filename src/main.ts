@@ -169,16 +169,13 @@ function refreshTitle(): void {
  *
  * - **未保存かどうか**（`.gera-dirty`）——**読んでいる最中も視界に入る必要がある。**
  *   窓の上端に細い線を一本出す。本文の幅を奪わず、目を離さなくても気づける
- * - **どのファイルか**（`.gera-file`）——**見たいときに見えればよい。**本文の
- *   先頭に置き、送れば流れて消える（viewer.ts の `setFile`）
- *
- * **どちらも常設 UI ではない**（第9節）。線は未保存のときだけ、名前はファイルを
- * 開いているときだけ出る。**状態が無ければ画面に何も足さない。**
+ * - **どのファイルか、そして `F1` があること**（`.gera-file`）——**画面の左上に
+ *   常に出す**（下の `refreshFileLabel`）
  */
 function refreshStatus(): void {
   refreshTitle();
   refreshDirtyMark();
-  refreshFileLabels();
+  refreshFileLabel();
   refreshEmptyHint();
 }
 
@@ -200,42 +197,78 @@ function refreshDirtyMark(): void {
 }
 
 /**
- * 開いているファイルの名前。**閲覧と編集で同じものを出す**——片方だけだと、
- * どちらのモードに居るかで見え方が変わって混乱する。
+ * 開いているファイルの名前と、`F1` があることの案内を、**画面の左上に常に出す。**
  *
- * 閲覧側は viewer.ts が本文の先頭に置く（描き直しで消えるので、あちらが持つ）。
- * 編集側はここが持つ。**CodeMirror の本文に要素を差し込めない**——行の高さの
- * 計算がずれてカーソルの位置が狂う——ので、スクロールする器（`scrollDOM`）の
- * 中に絶対配置する。**器が `position: relative` なので、絶対配置でも中身と
- * 一緒にスクロールして流れて消える**（CodeMirror 自身がカーソルの層を同じ形で
- * 置いている）。詳しい寸法は style.css の側に書いた。
+ * **2026-09-04、本人の指示で常設に変えた**（逐語）:
+ *
+ * > **左上に常に表示されているほうがいいですね。**
+ * > なんなら**ファイル名も上部にずっと表示されてる**ほうがいいかも。
+ *
+ * それまでは、閲覧側は本文の流れの先頭、編集側は `.cm-scroller` の中に絶対配置と、
+ * **モードごとに二箇所へ置いており、どちらも少し送れば流れて消えた。**
+ *
+ * **これは設計 第9節「本文以外の常設 UI を置かない」を緩める判断である。**第9節は
+ * 既に「初版の出発点であって恒久的な禁止ではない」と訂正されており、本人の
+ * 「まずスタートとしてはそれぐらいシンプルに作って、すこしずつ機能を足せばよい」と
+ * いう方針の内側にある。**とはいえ常設にする以上、代償は最小にする**——版面の幅を
+ * 一切狭めず（`position: fixed` で版面の外に居る）、本文の先頭も隠さず、地色を
+ * 敷いて送った本文と文字が重ならないようにした。詳しくは style.css の側に書いた。
+ *
+ * **窓に固定なので、閲覧・編集の両モードで同じ位置・同じ見た目になる。**置き場が
+ * 一つになったので、`viewer.ts` 側の本文への差し込みも無くなった——**そのぶん
+ * 段階的描画の枠（`EAGER = 8`）を一つ食っていたのも解消している。**
+ *
+ * **要素は一度だけ作り、以後は中身だけを入れ替える。**この関数は打鍵のたびに
+ * ——IME の変換中は一文字を確定する前にも何度も——呼ばれるので、
+ * **変わっていないときに DOM へ触らない**（第5-10節の「静止していればフレームが
+ * 出ない」を守る）。
+ *
+ * **フルパスは `title` 属性に入れる。**左上に出すには長すぎるが、どこのファイルかを
+ * 確かめる手段は要る。
  */
-let editFileLabel: HTMLElement | null = null;
-let editFileName: string | null = null;
+let fileLabel: HTMLElement | null = null;
+let fileLabelName: HTMLElement | null = null;
+let fileLabelTip: HTMLElement | null = null;
+/** いま札に入れてある名前。**`undefined` は「まだ一度も入れていない」**——`null`
+ * （無題）と区別が付かないと、無題で始まった起動で名前の箱を畳み損ねる。 */
+let shownFileName: string | null | undefined;
 
-function refreshFileLabels(): void {
+function refreshFileLabel(): void {
+  if (!fileLabel) {
+    fileLabel = document.createElement("div");
+    fileLabel.className = "gera-file";
+    fileLabelName = document.createElement("span");
+    fileLabelName.className = "gera-file-name";
+    fileLabelTip = document.createElement("span");
+    fileLabelTip.className = "gera-keys-tip";
+    fileLabelTip.textContent = "F1 キー一覧";
+    fileLabel.append(fileLabelName, fileLabelTip);
+    document.body.append(fileLabel);
+  }
   const name = currentPath ? baseName(currentPath) : null;
-  viewer.setFile(currentPath ? { name: name ?? currentPath, path: currentPath } : null);
-  // 編集モードを一度も開いていなければ、置く先がまだ無い。開いたときに置く。
-  if (!view) return;
-  if (name === editFileName) return; // 打鍵のたびに呼ばれる経路。変わらなければ触らない
-  editFileName = name;
-  if (!name || !currentPath) {
-    editFileLabel?.remove();
-    editFileLabel = null;
-    return;
-  }
-  if (!editFileLabel) {
-    editFileLabel = document.createElement("div");
-    editFileLabel.className = "gera-file";
-    view.scrollDOM.append(editFileLabel);
-  }
-  // 名前と `F1` の案内は viewer.ts と同じ組み立てを通す。**閲覧と編集で
-  // 見え方が違うと、どちらのモードに居るかで混乱する。**
-  viewer.fillFileLabel(editFileLabel, name);
-  // **フルパスは title 属性に入れる。**本文の頭に出すには長すぎるが、
-  // どこのファイルかを確かめる手段は要る。
-  editFileLabel.title = currentPath;
+  if (name === shownFileName) return;
+  shownFileName = name;
+  if (!fileLabelName) return;
+  fileLabelName.textContent = name ?? "";
+  // **無題のときは名前の箱ごと畳む。**空の箱を残すと、flex の間隔（1.4em）だけが
+  // 残って案内が理由もなく右へずれる。**案内のほうは無題でも出す**——ファイル名が
+  // 無いことは `F1` を知らせない理由にならず、むしろ無題で始まるのは初めて
+  // 起動した人である見込みが高い（第3節）。
+  fileLabelName.hidden = !name;
+  if (currentPath) fileLabel.title = currentPath;
+  else fileLabel.removeAttribute("title");
+}
+
+/**
+ * 空の文書の控えめな一覧（`.gera-keys-hint`）が出ている間だけ、左上の案内を畳む。
+ *
+ * **同じことを二度言わない。**一覧には `F1` の行も入っており、その真上に
+ * 「F1 キー一覧」と出ていても伝わるものが増えない。**一覧が消えれば戻る。**
+ */
+function refreshTipVisibility(hintShown: boolean): void {
+  if (!fileLabelTip) return;
+  if (fileLabelTip.hidden === hintShown) return; // 打鍵のたびに呼ばれる経路
+  fileLabelTip.hidden = hintShown;
 }
 
 let stashTimer: number | undefined;
@@ -283,8 +316,6 @@ async function ensureEditor(app: HTMLElement): Promise<EditorView> {
   });
   if (text) editor.replaceDoc(created, text);
   dirty = was;
-  // **view を先に入れてから状態を出す。**編集側のファイル名は scrollDOM に
-  // 置くので、view が入っていないと置き場が見つからず、初回だけ出ない。
   view = created;
   refreshStatus();
   return created;
@@ -441,6 +472,9 @@ function enterView(line: number): void {
   shown = true;
   viewer.renderInto(el, text);
   if (line > 0 || !fresh) viewer.scrollToLine(el, line);
+  // 空の文書の一覧は編集モードの器の中に居る。閲覧へ移れば見えなくなるので、
+  // 左上の案内を出し直す（下の enterEdit と対）。
+  refreshEmptyHint();
   // focus() は既定で対象を画面内へ送ろうとして寸法を測る。上と同じ理由で止める。
   el.focus({ preventScroll: true });
 }
@@ -477,6 +511,7 @@ async function enterEdit(): Promise<void> {
   if (scroller) scroller.hidden = true;
   app.hidden = false;
   mode = "edit";
+  refreshEmptyHint();
   scrollEditorToLine(v, line);
   v.focus();
 }
@@ -668,6 +703,9 @@ function refreshEmptyHint(): void {
   if (!keys || !view) return;
   if (text) keys.hideHint();
   else keys.showHint(view.scrollDOM);
+  // **一覧が画面に出ているのは編集モードのときだけである。**置き先が
+  // `.cm-scroller` の中なので、閲覧モードでは器ごと隠れている（`#app` の hidden）。
+  refreshTipVisibility(!text && mode === "edit");
 }
 
 /** 起動時に一度だけ。空の文書で編集モードに着いたときに読み込んで出す。 */
@@ -678,6 +716,7 @@ async function showEmptyHint(): Promise<void> {
   // **待っている間に打たれていたら出さない。**空でなくなった文書に一覧は要らない。
   if (text || !view) return;
   ui.showHint(view.scrollDOM);
+  refreshTipVisibility(mode === "edit");
 }
 
 // -------------------------------------------------------------- 字の大きさ

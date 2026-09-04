@@ -4,7 +4,7 @@
 
    **ここに現れるクラス名は公開 API である**（第9-4節）。利用者が自分の CSS で
    見た目を変えられることが要件なので、名前を変えるときは docs/CSS.md も直すこと。
-   （`.gera-keys-tip` だけは style.css にある——ファイル名の隣に常に出るものなので、
+   （`.gera-keys-tip` だけは style.css にある——画面の左上に常に出るものなので、
    このファイルの読み込みを待てない。）
 
    **寸法はすべて rem で書く。**`--font-scale`（`Mod +/-`）が動かすのは**版面**——
@@ -97,16 +97,18 @@
    **覆いにしない。**空の文書で利用者ができることは「書き始める」ことであり、
    閉じさせる形は目的と逆を向く（keys.ts 冒頭）。
 
-   置き場は `.gera-file` と同じ——CodeMirror の本文ではなくスクロールする器
-   （`.cm-scroller`）の中に絶対配置する。**器が `position: relative` なので、
-   絶対配置でも中身と一緒にスクロールする。**out of flow なので flex の並びにも
-   入らず、本文の幅も高さも奪わない。
+   置き場は CodeMirror の本文ではなくスクロールする器（`.cm-scroller`）の中で、
+   そこへ絶対配置する。**器が `position: relative` なので、絶対配置でも中身と
+   一緒にスクロールする。**out of flow なので flex の並びにも入らず、本文の幅も
+   高さも奪わない。
 
-   横位置は `.cm-content` に合わせる（style.css の `.gera-file` と同じ組み立て）。
-   左だけ 6px 多いのは `.cm-line` の左余白ぶんである。
+   横位置は `.cm-content` に合わせる。**幅を em で書けない**——em はこの要素自身の
+   font-size に対する比なので、基準の変数から直に組み立てる。左だけ 6px 多いのは
+   `.cm-line` の左余白（CodeMirror の既定）ぶんである。
 
    上端の 5rem は `.cm-content` の上余白 3.5rem より下、つまり**カーソルのある
-   一行目より下**に置くためのものである。 */
+   一行目より下**に置くためのものである。左上の札（style.css の `.gera-file`、
+   背の高さ約 2.6rem）とも重ならない。 */
 #app .cm-scroller > .gera-keys-hint {
   position: absolute;
   top: 5rem;
