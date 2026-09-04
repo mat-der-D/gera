@@ -1,0 +1,243 @@
+# Windows 版と macOS 版のビルド。開発機は Linux（Ubuntu 24.04）で、どちらも
+# クロスコンパイルできない——`windows-latest` と `macos-latest` を回すのが
+# 唯一の実用的な経路である（docs/DESIGN.md 第 13 節）。
+#
+# 当面の目的は配布ではなく、**実機で試せる人に渡すこと**である
+# （IME・フォント・`.md` の関連付け・`user.css` の置き場・`Mod+,` が第 15 節に
+# 未検証として並んでいる）。したがって main への push で毎回作り、
+# 成果物をアーティファクトとして置く。
+#
+# **なぜ一つのファイルにまとめてあるか。**Windows と macOS を別ファイルに分けると、
+# タグを打ったとき二つの実行が**同じタグの同じ下書きリリースへ**書きに行く。
+# softprops/action-gh-release v3 は下書きを見つけて一つにまとめてくれるが、
+# `body` は**あとから書いた側が前の側を上書きする**（v3 のソースで確認。
+# `append_body` を使わない限り update は body を置き換える）。
+# つまり分けると、**Gatekeeper の回避手順か SmartScreen の回避手順のどちらかが、
+# 実行の順番次第で消える。**受け取る側がアプリを開けなくなる種類の欠落なので、
+# リリース本文を書く場所は一つに保つ。
+#
+# ビルドは OS ごとに独立したジョブなので、**片方が落ちてももう片方の成果物は出る**
+# （アーティファクトはジョブごとに上がる）。**リリースの下書きだけは両方の成功を要求する**
+# ——タグを打って配る成果物が片肺なのは、下書きとしても望ましくない。
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+# 同じブランチで走っている古い実行は打ち切る。待たされないことが目的なので、
+# 追い越された実行に runner を使わせない。ただしタグの実行は打ち切らない。
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # 版は開発機に合わせて固定してある（node 23.8.0 / npm 10.9.2、rustc 1.97.0）。
+      # 手元で通ったものと同じ道具で組むためで、上げるときは macOS 側と揃えて直す。
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '23.8.0'
+          cache: npm
+
+      - name: Install Rust 1.97.0
+        run: |
+          rustup toolchain install 1.97.0 --profile minimal --no-self-update
+          rustup default 1.97.0
+
+      # Rust のビルドは遅い。src-tauri/target を跨いで持ち回す。
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Show tool versions
+        run: |
+          node --version
+          npm --version
+          rustc --version
+
+      - run: npm ci
+
+      # 作るものは tauri.conf.json の targets が決める。deb も入っているが、
+      # Tauri が OS に合わないものを自分で外すので Windows では nsis と msi になる。
+      #
+      # **--bundles で明示しないこと。**Windows の cmd.exe はカンマを引数の
+      # 区切りとして扱うため、`--bundles nsis,msi` が `'nsis msi'` に化けて
+      # cargo build まで流れ、`unexpected argument` で落ちた（2026-09-04 の実測）。
+      # 設定が変わって成果物が消えた場合は、下の if-no-files-found: error が捕まえる。
+      - name: Build (nsis + msi)
+        run: npm run tauri -- build
+
+      # インストーラ。`.md` の関連付けとショートカットはこちらでしか登録されない。
+      - uses: actions/upload-artifact@v7
+        with:
+          name: gera-windows-installer
+          path: |
+            src-tauri/target/release/bundle/nsis/*-setup.exe
+            src-tauri/target/release/bundle/msi/*.msi
+          if-no-files-found: error
+
+      # 素の実行ファイル。入れずに起動速度だけ見たいときのため。
+      - uses: actions/upload-artifact@v7
+        with:
+          name: gera-windows-exe
+          path: src-tauri/target/release/gera.exe
+          if-no-files-found: error
+
+  macos:
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # 版は Windows 側と同じものに固定する（上のコメント参照）。
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '23.8.0'
+          cache: npm
+
+      # **両方のターゲットを入れる。**`universal-apple-darwin` は疑似ターゲットで、
+      # 実体は aarch64 と x86_64 を別々に組んで `lipo` で束ねたものである。
+      # 片方しか入っていないとビルドが落ちる。`rustup target add` は
+      # default に設定したツールチェーンに対して効くので、順番を入れ替えないこと。
+      - name: Install Rust 1.97.0 (both Apple targets)
+        run: |
+          rustup toolchain install 1.97.0 --profile minimal --no-self-update
+          rustup default 1.97.0
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Show tool versions
+        run: |
+          node --version
+          npm --version
+          rustc --version
+          rustup target list --installed
+
+      - run: npm ci
+
+      # **ここでは --bundles を明示する必要がある。**tauri.conf.json の targets は
+      # ["deb", "nsis", "msi"] であって macOS 用のものが一つも無い。Tauri は
+      # OS に合わないものを外すので、そのままだと macOS では作るものが残らない。
+      #
+      # カンマ区切りは macOS の shell（bash）では化けない——Windows で
+      # `--bundles nsis,msi` が壊れたのは cmd.exe の引数解釈が原因であって、
+      # Tauri の CLI 自体は "Space or comma separated list" を受け付ける
+      # （`tauri build --help` の記載）。
+      #
+      # 友人の Mac が Apple Silicon か Intel か分かっていないので
+      # **ユニバーサルバイナリにする。**片方だけだと外したときに起動すらしない。
+      - name: Build universal (app + dmg)
+        run: npm run tauri -- build --target universal-apple-darwin --bundles app,dmg
+
+      # --target を付けると成果物は target/<target>/release/ の下に移る。
+      # 落ちたときに何がどこにあるか分かるよう、中身を出しておく。
+      - name: List bundle output
+        run: ls -lR src-tauri/target/universal-apple-darwin/release/bundle
+
+      # **.app は自分で zip する。**GitHub のアーティファクトは実行権限を保存しない
+      # ため、`.app`（ディレクトリ）をそのまま上げると、落として展開したものは
+      # 実行ビットもシンボリックリンクも失って起動しない。`ditto -c -k` は
+      # 実行権限・シンボリックリンク・拡張属性を保つ macOS 標準の経路である。
+      - name: Zip the .app
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent \
+            src-tauri/target/universal-apple-darwin/release/bundle/macos/gera.app \
+            gera-macos-universal.app.zip
+
+      # ディスクイメージ。/Applications に入れて使うとき用。
+      - uses: actions/upload-artifact@v7
+        with:
+          name: gera-macos-dmg
+          path: src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+
+      # 素のアプリ。入れずに動かしたいとき用（Windows 側の gera.exe と同じ考え方）。
+      - uses: actions/upload-artifact@v7
+        with:
+          name: gera-macos-app
+          path: gera-macos-universal.app.zip
+          if-no-files-found: error
+
+  # タグ（v*）のときだけ Releases に置く。**下書きのまま置く**——
+  # 中身を本人が確かめてから公開する（勝手に公開しない）。
+  release:
+    needs: [windows, macos]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+
+      - name: List downloaded artifacts
+        run: ls -lR artifacts
+
+      # 名前は upload-artifact のときのものと同じ。ただし複数のパスを
+      # 一つのアーティファクトに入れると、共通の親から下のディレクトリ構造が
+      # そのまま残る（gera-windows-installer は nsis/ と msi/ を含む）ので、
+      # ここでは `**` で受ける。取りこぼしは fail_on_unmatched_files が捕まえる。
+      - name: Draft release
+        uses: softprops/action-gh-release@v3
+        with:
+          draft: true
+          fail_on_unmatched_files: true
+          files: |
+            artifacts/gera-windows-installer/**/*-setup.exe
+            artifacts/gera-windows-installer/**/*.msi
+            artifacts/gera-windows-exe/gera.exe
+            artifacts/gera-macos-dmg/*.dmg
+            artifacts/gera-macos-app/gera-macos-universal.app.zip
+          body: |
+            ## Windows 版
+
+            - `gera_*-setup.exe` — インストーラ（NSIS）。`.md` の関連付けとショートカットはこちらで登録される
+            - `gera_*.msi` — 同じものの MSI 版
+            - `gera.exe` — 素の実行ファイル。入れずに動かしたいとき用（関連付けは付かない）
+
+            **このバイナリは署名していない。**そのため Windows SmartScreen が
+            「WindowsによってPCが保護されました」と警告を出す。
+            **「詳細情報」→「実行」**で進められる。
+
+            ## macOS 版
+
+            **ユニバーサルバイナリである**（Apple Silicon と Intel の両方で動く）。
+
+            - `gera_*_universal.dmg` — ディスクイメージ。開いて `gera.app` を「アプリケーション」へ入れる
+            - `gera-macos-universal.app.zip` — 素のアプリ。入れずに動かしたいとき用
+
+            **このバイナリは署名も公証（notarization）もしていない。**そのため
+            初回は Gatekeeper が止め、ダブルクリックでは開けない。**壊れているのではない。**
+
+            1. まず一度、普通に開こうとする（止められる）
+            2. **システム設定 → プライバシーとセキュリティ**を開き、下へスクロールして
+               **「このまま開く」**を押す
+            3. もう一度警告が出るので**「開く」**を押す
+
+            以降は普通に開ける。
+
+            **右クリック →「開く」は、macOS 15 (Sequoia) 以降では通らない**——
+            Apple がこの抜け道を塞いだため、現行の手順は上の「このまま開く」である。
+            古い macOS では右クリックでも開ける。
+
+            端末から外す場合は `xattr -d com.apple.quarantine /Applications/gera.app`
+            （**未検証**）。
+
+            **macOS 版はまだ誰も実機で動かしていない。**確かめるべき項目は
+            README の「macOS で確かめること」と docs/DESIGN.md 第 15 節にある。

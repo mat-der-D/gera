@@ -62,20 +62,55 @@ Rust 側の責務はファイル入出力、ダイアログ、ウィンドウ状
 
 設計の詳細・実測値・判断の根拠は [docs/DESIGN.md](docs/DESIGN.md) にある。
 
-## Windows 版
+## Windows 版・macOS 版
 
-**GitHub Actions（`windows-latest`）でビルドしている。**開発機が Linux のため、Windows 版はここでしか作れない。
+**GitHub Actions（`windows-latest` / `macos-latest`）でビルドしている。**開発機が Linux のため、どちらもここでしか作れない。
 
-- **試用版**——[Actions](../../actions/workflows/windows.yml) の最新の実行を開き、`gera-windows-installer`（インストーラ）または `gera-windows-exe`（素の実行ファイル）を落とす。**GitHub にログインしていないと落とせない**
+- **試用版**——[Actions](../../actions/workflows/build.yml) の最新の実行を開いてアーティファクトを落とす。**GitHub にログインしていないと落とせない**
 - **公開版**——[Releases](../../releases)。タグを打つと下書きができ、確認してから公開する
 
-**署名していないので、初回起動時に SmartScreen が「WindowsによってPCが保護されました」と警告を出す。****「詳細情報」→「実行」**で進める。
+| | アーティファクト |
+|---|---|
+| Windows | `gera-windows-installer`（インストーラ）/ `gera-windows-exe`（素の実行ファイル） |
+| macOS | `gera-macos-dmg`（ディスクイメージ）/ `gera-macos-app`（素のアプリ。zip） |
 
-**ユーザー CSS の置き場は `%APPDATA%\dev.smoothpudding.gera\user.css` と推定している。**これは Tauri の `app_config_dir()` の定義から導いた値であって、**Windows 実機では未検証である**（[docs/DESIGN.md](docs/DESIGN.md) 第 15 節）。確認したらここを直す。
+**macOS 版はユニバーサルバイナリである**——Apple Silicon と Intel の両方で動く。
+
+### 署名していない
+
+**Windows**——初回起動時に SmartScreen が「WindowsによってPCが保護されました」と警告を出す。**「詳細情報」→「実行」**で進める。
+
+**macOS**——Gatekeeper が止め、**ダブルクリックでは開けない。壊れているのではない。**
+
+1. まず一度、普通に開こうとする（止められる）
+2. **システム設定 → プライバシーとセキュリティ**を開き、下へスクロールして**「このまま開く」**を押す
+3. もう一度警告が出るので**「開く」**を押す
+
+以降は普通に開ける。**右クリック →「開く」は macOS 15 (Sequoia) 以降では通らない**（Apple が塞いだ。古い macOS では通る）。端末から外す `xattr -d com.apple.quarantine /Applications/gera.app` は**未検証**。
+
+### ユーザー CSS の置き場
+
+**Windows は `%APPDATA%\dev.smoothpudding.gera\user.css`、macOS は `~/Library/Application Support/dev.smoothpudding.gera/user.css` と推定している。**どちらも Tauri の `app_config_dir()` の定義から導いた値であって、**実機では未検証である**（[docs/DESIGN.md](docs/DESIGN.md) 第 15 節）。確認したらここを直す。
+
+### macOS で確かめること
+
+**macOS で gera を動かした人はまだ一人もいない。**上の二つに加えて、次が未検証である。
+
+| 項目 | いま分かっていること |
+|---|---|
+| 日本語 IME | WKWebView なので Linux の候補窓のずれ（[WebKit bug 218148](https://bugs.webkit.org/show_bug.cgi?id=218148)）は出ないはず。**理屈だけ** |
+| フォント | ヒラギノ明朝・ヒラギノ角ゴシックが解決するか |
+| `Cmd+,` | ユーザー CSS の読み直し。**macOS では「設定…」の綴りなので、OS に奪われる見込みが高い** |
+| `Cmd+R` / `Cmd+F` / `Cmd+Shift+O` / `Cmd +` `Cmd -` `Cmd 0` | 同様に奪われないか |
+| `F1` | キーの一覧。**機種によっては `Fn+F1` が要る** |
+| キーの表記 | `Cmd` に出し分ける処理は入っているが未検証 |
+| `.md` の関連付け | ダブルクリックして gera で開くか |
+| タイトルバー | Linux のネイティブ Wayland では機能しない（既知）。macOS では効く見込みだが未検証 |
+| ビルドそのもの | **CI をまだ一度も走らせていない** |
 
 ## 想定利用者
 
-開発者と友人の二人。主に日本語で使う。開発するのは一人。友人へは Windows 版を GitHub Releases で配布する。
+開発者（Linux）と友人（Windows と macOS）の二人。主に日本語で使う。開発するのは一人。友人へは GitHub Releases で配布する。
 
 ## ライセンス
 
