@@ -150,6 +150,91 @@ function refreshTitle(): void {
     .catch((e: unknown) => console.error("[gera] タイトルの更新に失敗", e));
 }
 
+// ------------------------------------------------ 状態を本文側にも出す
+
+/**
+ * **タイトルバーは当てにできない**（2026-09-04）。
+ *
+ * 上の `refreshTitle` は `• DESIGN.md — gera` を正しく送っており、
+ * `WAYLAND_DEBUG=1` で `xdg_toplevel.set_title` が飛んでいることも確かめてある。
+ * それでも**本人の環境（ネイティブ Wayland / GNOME）では初期値の `gera` のまま
+ * 描かれる**（スクリーンショットで確認）。`GDK_BACKEND=x11` を強制すると正しく
+ * 出るので、GTK と mutter の領分の問題であり、アプリ側から手が届かない。
+ * **X11 に逃げる道は無い**——コールド起動が 560 ms 遅くなる（第5-8節）。
+ *
+ * **タイトルの設定は消さずに残す。**X11 では効いており、Windows でも効く見込みが
+ * ある。ここで足すのは、それが効かない環境のための**もう一本の経路**である。
+ *
+ * 出すものは二つで、**性質が違うので形も分けた。**
+ *
+ * - **未保存かどうか**（`.gera-dirty`）——**読んでいる最中も視界に入る必要がある。**
+ *   窓の上端に細い線を一本出す。本文の幅を奪わず、目を離さなくても気づける
+ * - **どのファイルか**（`.gera-file`）——**見たいときに見えればよい。**本文の
+ *   先頭に置き、送れば流れて消える（viewer.ts の `setFile`）
+ *
+ * **どちらも常設 UI ではない**（第9節）。線は未保存のときだけ、名前はファイルを
+ * 開いているときだけ出る。**状態が無ければ画面に何も足さない。**
+ */
+function refreshStatus(): void {
+  refreshTitle();
+  refreshDirtyMark();
+  refreshFileLabels();
+}
+
+/** 未保存の印。**要るまで作らない**——起動して読むだけの経路では一度も作られない。 */
+let dirtyMark: HTMLElement | null = null;
+
+function refreshDirtyMark(): void {
+  if (!dirty && !dirtyMark) return;
+  if (!dirtyMark) {
+    dirtyMark = document.createElement("div");
+    dirtyMark.className = "gera-dirty";
+    document.body.append(dirtyMark);
+    return; // 作った時点で dirty。既定で見えているので触らない
+  }
+  // **打鍵のたびに呼ばれる。**同じ値でも属性に書くと様式の計算をやり直させるので、
+  // 変わったときだけ触る（第5-10節の「静止していればフレームが出ない」を守る）。
+  if (dirtyMark.hidden === !dirty) return;
+  dirtyMark.hidden = !dirty;
+}
+
+/**
+ * 開いているファイルの名前。**閲覧と編集で同じものを出す**——片方だけだと、
+ * どちらのモードに居るかで見え方が変わって混乱する。
+ *
+ * 閲覧側は viewer.ts が本文の先頭に置く（描き直しで消えるので、あちらが持つ）。
+ * 編集側はここが持つ。**CodeMirror の本文に要素を差し込めない**——行の高さの
+ * 計算がずれてカーソルの位置が狂う——ので、スクロールする器（`scrollDOM`）の
+ * 中に絶対配置する。**器が `position: relative` なので、絶対配置でも中身と
+ * 一緒にスクロールして流れて消える**（CodeMirror 自身がカーソルの層を同じ形で
+ * 置いている）。詳しい寸法は style.css の側に書いた。
+ */
+let editFileLabel: HTMLElement | null = null;
+let editFileName: string | null = null;
+
+function refreshFileLabels(): void {
+  const name = currentPath ? baseName(currentPath) : null;
+  viewer.setFile(currentPath ? { name: name ?? currentPath, path: currentPath } : null);
+  // 編集モードを一度も開いていなければ、置く先がまだ無い。開いたときに置く。
+  if (!view) return;
+  if (name === editFileName) return; // 打鍵のたびに呼ばれる経路。変わらなければ触らない
+  editFileName = name;
+  if (!name || !currentPath) {
+    editFileLabel?.remove();
+    editFileLabel = null;
+    return;
+  }
+  if (!editFileLabel) {
+    editFileLabel = document.createElement("div");
+    editFileLabel.className = "gera-file";
+    view.scrollDOM.append(editFileLabel);
+  }
+  editFileLabel.textContent = name;
+  // **フルパスは title 属性に入れる。**本文の頭に出すには長すぎるが、
+  // どこのファイルかを確かめる手段は要る。
+  editFileLabel.title = currentPath;
+}
+
 let stashTimer: number | undefined;
 
 /**
@@ -190,13 +275,15 @@ async function ensureEditor(app: HTMLElement): Promise<EditorView> {
   const created = editor.createEditor(app, [], (latest) => {
     text = latest;
     dirty = true;
-    refreshTitle();
+    refreshStatus();
     scheduleStash(latest);
   });
   if (text) editor.replaceDoc(created, text);
   dirty = was;
-  refreshTitle();
+  // **view を先に入れてから状態を出す。**編集側のファイル名は scrollDOM に
+  // 置くので、view が入っていないと置き場が見つからず、初回だけ出ない。
   view = created;
+  refreshStatus();
   return created;
 }
 
@@ -217,13 +304,13 @@ async function openFile(): Promise<void> {
   baseDigest = loaded.digest;
   externalChanged = false;
   dirty = false;
-  refreshTitle();
+  refreshStatus();
   if (view) {
     const editor = await import("./editor");
     editor.replaceDoc(view, loaded.text);
     // replaceDoc が onChange を同期に呼ぶため、dirty はそのあとで落とす。
     dirty = false;
-    refreshTitle();
+    refreshStatus();
   }
   // **文書を読み込んだら閲覧モードで見せる**（第1節「ほとんどビューアー」）。
   // 起動時の復元（下）と同じ扱いにする——どの経路で文書が入っても着く先が
@@ -269,7 +356,7 @@ async function saveFile(forcePicker: boolean): Promise<void> {
   baseDigest = written.digest;
   externalChanged = false;
   dirty = false;
-  refreshTitle();
+  refreshStatus();
 }
 
 // ------------------------------------------------------------ モードの切替
@@ -361,6 +448,15 @@ function enterView(line: number): void {
  * 隠している間や字の大きさを変えた直後は寸法が古いので、測り直してから寄せる。
  */
 function scrollEditorToLine(v: EditorView, line: number): void {
+  // **先頭は「上端」であって「1 行目を 24px 下げた位置」ではない。**
+  // scrollIntoView に 0 行目を渡すと、上の余白（3.5rem）のうち 24px だけを
+  // 残して送るので、器の頭が 32px ぶん隠れる。閲覧側の scrollToLine が
+  // `line <= 0` を `scrollTop = 0` として扱っているのと揃える——**揃えないと、
+  // 上余白に置いたファイル名が編集モードでだけ半分切れる。**
+  if (line <= 0) {
+    v.scrollDOM.scrollTop = 0;
+    return;
+  }
   v.requestMeasure();
   const target = v.state.doc.line(Math.min(line + 1, v.state.doc.lines));
   // cm は ensureEditor が必ず埋める。型の上で null を許しているだけである。
@@ -803,13 +899,13 @@ async function reloadFile(): Promise<void> {
   baseDigest = loaded.digest;
   externalChanged = false;
   dirty = false;
-  refreshTitle();
+  refreshStatus();
   if (view) {
     const editor = await import("./editor");
     editor.replaceDoc(view, loaded.text);
     // replaceDoc が onChange を同期に呼ぶため、dirty はそのあとで落とす（openFile と同じ）。
     dirty = false;
-    refreshTitle();
+    refreshStatus();
   }
   // **いま居るモードから動かさない。**読み直しは場所を変える操作ではない。
   if (mode === "view") enterView(line);
@@ -942,7 +1038,7 @@ function reportFontsWhenIdle(): void {
 }
 reportFontsWhenIdle();
 
-refreshTitle();
+refreshStatus();
 // 記憶した倍率は、最初に描く前に効かせる。あとから当てると版面を二度組むことになる。
 applyFontScale();
 
@@ -971,7 +1067,7 @@ run("起動", async () => {
       text = loaded.text;
       currentPath = startup.path;
       baseDigest = loaded.digest;
-      refreshTitle();
+      refreshStatus();
       enterView(0);
       return;
     } catch (e) {
@@ -993,7 +1089,7 @@ run("起動", async () => {
     text = session.text;
     // 退避は「まだファイルに書いていない状態」の記録なので、dirty は落とさない。
     dirty = true;
-    refreshTitle();
+    refreshStatus();
     enterView(0);
     return;
   }

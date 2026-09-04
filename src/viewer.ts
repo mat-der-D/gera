@@ -419,16 +419,71 @@ export function renderInto(scroller: HTMLElement, text: string): void {
     scroller.append(body);
     lastText = null;
   }
-  if (text === lastText) return;
-  lastText = text;
-  const { html, math, headings: found } = build(text);
-  // 描くついでに見出しも憶える。アウトラインを呼んだときに変換をやり直さない。
-  headingsText = text;
-  headings = found;
-  // トップレベルのブロックが .gera-doc の直下に平らに並ぶ。ブロック一つを
-  // replaceWith で入れ替えても壊れない形にしておく（局所編集のため）。
-  body.innerHTML = html;
-  fillMath(scroller, body, math);
+  if (text !== lastText) {
+    lastText = text;
+    const { html, math, headings: found } = build(text);
+    // 描くついでに見出しも憶える。アウトラインを呼んだときに変換をやり直さない。
+    headingsText = text;
+    headings = found;
+    // トップレベルのブロックが .gera-doc の直下に平らに並ぶ。ブロック一つを
+    // replaceWith で入れ替えても壊れない形にしておく（局所編集のため）。
+    body.innerHTML = html;
+    fillMath(scroller, body, math);
+  }
+  // **数式を組んだあとに置く。**fillMath は `.gera-doc` の子の先頭から EAGER 個を
+  // その場で組む（下）。先に差し込むと、その 1 枠を見出し表示が食って、実測で
+  // 決めた 8 という数が 7 に減る。順序を変えるだけで、値の意味を保てる。
+  applyFileLabel();
+}
+
+// -------------------------------------------------- 開いているファイルの表示
+
+/**
+ * いま開いているファイルの名前を、本文の先頭に置く。
+ *
+ * **タイトルバーが当てにできないからである。**setWindowTitle は正しい文字列を
+ * 送っており、X11 では表示されるが、**本人の環境（ネイティブ Wayland / GNOME）
+ * では初期値のまま描かれない**（2026-09-04、WAYLAND_DEBUG で送信を、
+ * スクリーンショットで表示を確認）。GTK と mutter の領分でこちらから手が届かず、
+ * X11 に逃げるとコールド起動が 560 ms 遅くなる（第5-8節）。**したがって、
+ * 開いているファイルが何かを本文側で示すほかない。**
+ *
+ * **常設 UI ではない**（第9節）。本文の流れの中の一要素なので、
+ * **少し送れば見出しと一緒に画面から消える。**「どのファイルか」は常に見えて
+ * いる必要のない情報で、探しに行けば分かれば足りる——だから幅も面積も
+ * 常には奪わない形にした。**未保存かどうかは逆に常に見えている必要があり、
+ * そちらは別の形（main.ts の `.gera-dirty`）で出している。**
+ *
+ * **フルパスは `title` 属性に入れる。**本文の先頭にフルパスを置くと長すぎて
+ * 版面の頭が汚れるが、どこのファイルかを確かめる手段は要る。
+ *
+ * **無題（ファイルから来ていない本文）のときは何も出さない。**出すものが無い。
+ */
+let fileInfo: { name: string; path: string } | null = null;
+let fileLabel: HTMLElement | null = null;
+
+export function setFile(file: { name: string; path: string } | null): void {
+  // 打鍵のたびに呼ばれる経路にあるので、変わっていなければ DOM に触らない。
+  if ((file?.path ?? null) === (fileInfo?.path ?? null)) return;
+  fileInfo = file;
+  applyFileLabel();
+}
+
+function applyFileLabel(): void {
+  if (!body) return; // まだ一度も描いていない。次の renderInto が置く
+  if (!fileInfo) {
+    fileLabel?.remove();
+    fileLabel = null;
+    return;
+  }
+  if (!fileLabel) {
+    fileLabel = document.createElement("div");
+    fileLabel.className = "gera-file";
+  }
+  fileLabel.textContent = fileInfo.name;
+  fileLabel.title = fileInfo.path;
+  // body.innerHTML の差し替えで消えるので、そのたびに置き直す。
+  if (body.firstChild !== fileLabel) body.prepend(fileLabel);
 }
 
 // ------------------------------------------------------------ 数式の後回し
