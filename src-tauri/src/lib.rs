@@ -107,16 +107,105 @@ fn require_allowed(allowed: &Allowed, path: &str) -> Result<(), String> {
     Err(format!("{path} は開かれていないため触れない"))
 }
 
+/// 内容の指紋（第9-6節）。**外部からの書き換えを見つけるためだけに使う。**
+///
+/// **mtime ではなく内容で見る。**mtime は中身が同じでも動く——git の checkout や
+/// エディタの保存し直しで、一文字も変わっていないのに「書き換えられた」と言うことに
+/// なる。偽の知らせは、本物の知らせを信じさせなくする。
+///
+/// **暗号学的なハッシュを使わない。**ここで守っているのは「利用者が気づかないうちに
+/// 他人の変更を消す」経路であって、攻撃者に対する防御ではない——ファイルを書ける
+/// 相手は、指紋を合わせるまでもなく好きに書ける。したがって衝突困難性は要らず、
+/// 偶然の衝突が実質起きなければ足りる。**新しい依存を足さない**理由でもある。
+///
+/// FNV-1a に長さを添える。長さが違えば指紋は必ず違うので、
+/// 実際に取り違えが起きるのは「同じ長さで 64 ビットが衝突した」場合だけである。
+fn digest(bytes: &[u8]) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for &b in bytes {
+        hash ^= u64::from(b);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{}-{hash:016x}", bytes.len())
+}
+
+/// いまディスクにある内容の指紋。**読み込んだときの指紋と突き合わせるために使う。**
+///
+/// **計算はここで行う。**212KB の本文をフロントへ運んで向こうで数えるのは、
+/// 指紋を得るためだけに IPC を一往復ぶん太らせることになる。
+///
+/// 読めなければ Err である。消された・権限が変わったといった事情は、
+/// 「書き換えられた」とは別のことなので、呼び出し側で言い分けられるようにしておく。
 #[tauri::command]
-fn read_file(allowed: State<'_, Allowed>, path: String) -> Result<String, String> {
+fn file_digest(allowed: State<'_, Allowed>, path: String) -> Result<String, String> {
     require_allowed(&allowed, &path)?;
-    fs::read_to_string(&path).map_err(|e| format!("{path} を読めなかった: {e}"))
+    let bytes = fs::read(&path).map_err(|e| format!("{path} を読めなかった: {e}"))?;
+    Ok(digest(&bytes))
+}
+
+/// 読んだ本文と、そのときの指紋。
+///
+/// **指紋を別の口にせず、読んだら必ず一緒に返す。**別の口にすると、読んだのに
+/// 指紋を取り損ねた状態が作れてしまい、その状態からの保存は突き合わせる相手を
+/// 持たない——つまり黙って上書きする（第9-6節）。**型で起こらなくしておく。**
+#[derive(Debug, Serialize)]
+struct FileContents {
+    text: String,
+    digest: String,
 }
 
 #[tauri::command]
-fn write_file(allowed: State<'_, Allowed>, path: String, contents: String) -> Result<(), String> {
+fn read_file(allowed: State<'_, Allowed>, path: String) -> Result<FileContents, String> {
     require_allowed(&allowed, &path)?;
-    fs::write(&path, contents).map_err(|e| format!("{path} に書けなかった: {e}"))
+    let bytes = fs::read(&path).map_err(|e| format!("{path} を読めなかった: {e}"))?;
+    let digest = digest(&bytes);
+    let text = String::from_utf8(bytes).map_err(|_| format!("{path} は UTF-8 ではない"))?;
+    Ok(FileContents { text, digest })
+}
+
+/// 書き込みの結果（第9-6節）。
+///
+/// **食い違いを Err にしない。**Err は「保存という操作が失敗した」ことを表す形で、
+/// フロント側では他の失敗と同じ扱いになる。ここで起きているのは失敗ではなく
+/// **予定どおりの拒否**であり、利用者へ見せるものも違う（出口の案内）。
+/// 文字列を読み分けさせるのではなく、型で分ける。
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum Written {
+    Saved { digest: String },
+    Conflict,
+}
+
+/// 書き込み。`expect` があれば、**書く直前に**ディスクの内容と突き合わせる（第9-6節）。
+///
+/// **突き合わせをここで行うのは、読んで比べて書くまでを一続きにするためである。**
+/// フロント側で「指紋を訊く」「書く」と二回に分けると、その隙間に書き換えられた
+/// ぶんを取りこぼす。
+///
+/// `expect` が `None` のときは突き合わせない。これは**別名保存**（第9-6節の
+/// 三つの出口）が通る道である——食い違っているときの唯一の出口なので、
+/// ここを塞ぐと逃げ場が無くなる。同じ名前を選び直した場合に上書きしてよいかは、
+/// OS の保存ダイアログが「置き換えますか」と訊いて既に決着している。
+#[tauri::command]
+fn write_file(
+    allowed: State<'_, Allowed>,
+    path: String,
+    contents: String,
+    expect: Option<String>,
+) -> Result<Written, String> {
+    require_allowed(&allowed, &path)?;
+    if let Some(expect) = expect {
+        // 読めないときは食い違い扱いにする。**消されている・権限が変わっている
+        // のに黙って作り直すと、消したという相手の操作を取り消すことになる。**
+        let current = fs::read(&path).map(|bytes| digest(&bytes)).ok();
+        if current.as_deref() != Some(expect.as_str()) {
+            return Ok(Written::Conflict);
+        }
+    }
+    fs::write(&path, &contents).map_err(|e| format!("{path} に書けなかった: {e}"))?;
+    // **書いた内容の指紋を返す。**次の保存でこれを基準にすれば、自分の書き込みを
+    // 外部からの書き換えと取り違えない（第9-6節）。
+    Ok(Written::Saved { digest: digest(contents.as_bytes()) })
 }
 
 /// 開くダイアログ。選ばれたパスを**この中で**集合に入れてからフロントへ返す。
@@ -432,6 +521,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             read_file,
             write_file,
+            file_digest,
             pick_file_to_open,
             pick_path_to_save,
             initial_path,

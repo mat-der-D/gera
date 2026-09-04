@@ -18,6 +18,7 @@ import * as viewer from "./viewer";
 import type { EditorView } from "@codemirror/view";
 import {
   copyToClipboard,
+  fileDigest,
   initialPath,
   loadSession,
   openExternal,
@@ -38,6 +39,28 @@ import type { FindMatch } from "./find";
 let text = "";
 let currentPath: string | null = null;
 let dirty = false;
+
+/**
+ * **いまの本文が、どのファイルのどの版から来たか**（第9-6節）。
+ *
+ * 読んだとき・保存できたときに、その時点の内容の指紋（Rust 側が作る文字列）を
+ * ここに入れる。外部からの書き換えは、これと**いまディスクにあるもの**の
+ * 突き合わせで見つかる。**mtime ではなく内容で見る**——mtime は中身が同じでも
+ * 動くため、偽の知らせを出す（host.ts の fileDigest）。
+ *
+ * `null` なのは、ファイルから来ていない本文（無題、退避からの復元）である。
+ * 突き合わせる相手が無いので、検知も拒否も行わない。
+ */
+let baseDigest: string | null = null;
+
+/**
+ * 外部で書き換えられたことを、もう知らせたか（第9-6節）。
+ *
+ * フォーカスが戻るたびに帯を出し直すと、読み直さない限り毎回出ることになって
+ * うるさい。**知らせるのは食い違いを見つけた最初の一度だけ**にして、
+ * 読み直すか保存できたところで倒す。
+ */
+let externalChanged = false;
 // 退避を読むまでは、どちらのモードに着くかが決まらない。中身のある文書なら閲覧、
 // 空なら編集である（このファイル末尾の起動処理）。
 let mode: "edit" | "view" = "view";
@@ -181,13 +204,15 @@ async function openFile(): Promise<void> {
   const path = await pickFileToOpen();
   if (!path) return; // 取り消しは失敗ではない
   const loaded = await readFile(path);
-  text = loaded;
+  text = loaded.text;
   currentPath = path;
+  baseDigest = loaded.digest;
+  externalChanged = false;
   dirty = false;
   refreshTitle();
   if (view) {
     const editor = await import("./editor");
-    editor.replaceDoc(view, loaded);
+    editor.replaceDoc(view, loaded.text);
     // replaceDoc が onChange を同期に呼ぶため、dirty はそのあとで落とす。
     dirty = false;
     refreshTitle();
@@ -198,12 +223,43 @@ async function openFile(): Promise<void> {
   await enterView(0);
 }
 
+/**
+ * 保存する（第9-3節、第9-6節）。
+ *
+ * **上書き保存は、外部で書き換えられていたら拒否する。**そのまま書くと相手の変更が
+ * 消え、消えたことに誰も気づかない。突き合わせは Rust 側が**書く直前に**行う
+ * （host.ts の writeFile の `expect`）——こちらで訊いてから書くと、その隙間に
+ * 書き換えられたぶんを取りこぼす。
+ *
+ * **別名保存（`Mod+Shift+S`）は突き合わせない。**食い違ったときの唯一の出口なので、
+ * ここを塞ぐと逃げ場が無くなる。同じ名前を選び直したときに上書きしてよいかは、
+ * OS の保存ダイアログが「置き換えますか」と訊いて既に決着している。
+ */
 async function saveFile(forcePicker: boolean): Promise<void> {
   const path = forcePicker || !currentPath ? await pickPathToSave(currentPath) : currentPath;
   if (!path) return;
-  await writeFile(path, text);
+  // 突き合わせる相手があるのは、いま開いているファイルへの上書きのときだけである。
+  const expect = !forcePicker && path === currentPath ? baseDigest : null;
+  const written = await writeFile(path, text, expect);
+  if (written.kind === "conflict") {
+    externalChanged = true;
+    // **出口を三つとも書く。**拒否だけを伝えて先を示さないと、利用者は
+    // 「保存できない文書」を抱えたまま行き場を失う。どれも既にあるキーで済む
+    // ——ここで新しい綴りを作らない（第4節の第二優先）。
+    notify(
+      "外部で書き換えられているため保存しませんでした。\n" +
+        "Mod+R … 相手のを取る（自分の編集は失われます）\n" +
+        "Mod+Shift+S … 別名で保存して両方残す\n" +
+        "Mod+Shift+S で同じ名前を選ぶ … 自分のを残す（置き換えるか OS が訊きます）",
+    );
+    return;
+  }
   // 例外が出なかったときだけ dirty を落とす。失敗を成功として扱わない。
   currentPath = path;
+  // **書いた内容を新しい基準にする。**そうしないと、次の `Mod+S` が
+  // 自分自身の書き込みを外部からの書き換えと取り違える。
+  baseDigest = written.digest;
+  externalChanged = false;
   dirty = false;
   refreshTitle();
 }
@@ -609,7 +665,7 @@ const userCssAtStart: Promise<void> = (async () => {
 })();
 
 /**
- * 利用者 CSS を読み直す（`Mod+R`）。
+ * 利用者 CSS を読み直す（`Mod+,`）。
  *
  * **本人の使い方に必須である**——Claude Code に CSS を書かせて調整する想定なので
  * （第9-4節）、書き換えるたびに gera を起動し直すのでは往復が成立しない。
@@ -630,6 +686,127 @@ async function reloadUserCss(): Promise<void> {
   // 利用者が区別できる必要がある。置き場そのものを出すのは、設定画面が無い以上
   // 「どこに置けばよいか」を伝える場所が他に無いからである。
   notify(css === null ? `利用者 CSS がありません: ${path}` : `利用者 CSS を読み直しました: ${path}`);
+}
+
+// -------------------------------------------------- 外部からの書き換え
+
+/**
+ * 外部からの書き換えへの追随（第9-6節、第14節の実装順序 9）。
+ *
+ * **規則は「常に知らせるだけ。読み直すかは人が決める」である。**未保存の変更の
+ * 有無で分岐しない。読んでいる最中に本文が黙って入れ替わること自体が損失であり、
+ * しかも入れ替わったことに気づけない。**gera は書き手でもある**ので、勝手に
+ * 読み直すのは二人の書き手が一つのファイルを取り合う話になる。ブラウザと同じ作法
+ * ——知らせて、読み直しは `Mod+R` に委ねる——にすれば、覚えることも増えない。
+ *
+ * **調べるのはウィンドウがフォーカスを得たときと、保存の直前だけである。**
+ *
+ * - **利用者が Claude Code で書き換えて gera に戻ってくる瞬間**が、まさにそのとき
+ *   である。自然で、取りこぼしが少ない
+ * - **常時動く仕組みを持たない。**アイドル時に 60fps で描き続けるバグを直した
+ *   ばかりであり（第5-10節）、ここでポーリングのループを足すのは筋が悪い
+ * - ファイル監視（`notify` クレート等）は依存と常駐スレッドが増える。得られるのは
+ *   「フォーカスを持ったまま変更に気づける」だけで、その場面は稀である。しかも
+ *   **保存の直前には必ず調べる**ので、実害のある取りこぼし（黙って上書き）は
+ *   そちらで捕まる
+ *
+ * DOM の `focus` を使い、Tauri のウィンドウ事象を購読しない。**権限を増やさずに
+ * 済む**（`capabilities/default.json`）うえ、フォーカスを得れば webview の
+ * document も焦点を得るので、必要な瞬間はこれで拾える。
+ */
+window.addEventListener("focus", () => {
+  void checkFileChanged();
+});
+
+async function checkFileChanged(): Promise<void> {
+  // 突き合わせる相手が無い（無題、退避からの復元）ときは何もしない。
+  // 既に知らせてあるときも黙る——読み直すまでフォーカスのたびに出るのは、うるさい。
+  if (!currentPath || !baseDigest || externalChanged) return;
+  let latest: string;
+  try {
+    latest = await fileDigest(currentPath);
+  } catch (e: unknown) {
+    // 消された・権限が変わった、は「書き換えられた」とは別のことである。
+    // **帯は出さない**——利用者が起こした操作への応答ではないので、
+    // 画面を触っていないのに文字が出ることになる。保存しようとすれば分かる。
+    console.error("[gera] 外部の変更を確かめられなかった", e);
+    return;
+  }
+  if (latest === baseDigest) return;
+  externalChanged = true;
+  notify(
+    "このファイルは外部で書き換えられました。Mod+R で読み直します。" +
+      (dirty ? "\n未保存の変更は失われます。" : ""),
+  );
+}
+
+/**
+ * `Mod+R` の押し直しを受け付ける期限（第9-6節）。
+ *
+ * 未保存の変更を黙って捨てないための仕掛けである。**確認のダイアログは作らない**
+ * （第9節）ので、代わりに一度目で帯を出して知らせ、二度目で実行する。期限を帯と
+ * 同じ 5 秒にしてあるのは、**画面に出ている警告と、受け付けている状態を一致させる
+ * ため**である——帯が消えたのに受け付けが残っていると、何も表示されていない画面で
+ * 押した `Mod+R` が本文を捨てることになる。
+ *
+ * **`Mod+S` を二度押しさせる形にしなかったのと同じ理屈は、ここには当てはまらない。**
+ * `Ctrl+S` は癖で二度押す人がいるが、`Mod+R` は連打する綴りではない。
+ */
+let reloadArmedUntil = 0;
+
+/**
+ * ファイルを読み直す（`Mod+R`）。**本文全体をファイルの内容で置き換える。**
+ *
+ * **ブロック単位の差し替えにしない。**理由は三つある。
+ *
+ * 1. ブロック単位にすると「**何と何を突き合わせるか**」の選択肢が生まれ、
+ *    「前回読んだファイル」と「新しいファイル」を突き合わせる実装が自然に
+ *    書けてしまう。**それは併合であって、`Mod+R` の意味が変わる**
+ * 2. **gera には差分ビューが無い。**どこが自分の変更でどこが相手の変更かを
+ *    見せる手段が無いまま混ぜると、利用者は結果を検算できない
+ * 3. 仕掛けを持った時点で「どのブロックが自分のか」という問いが立ち、
+ *    **利用者が覚えることが増える**（第4節の第二優先）
+ *
+ * したがって自分の編集は捨てられる。**全体を組み直す代償（実測 0.4 秒とちらつき）は
+ * 払う**——明示的に押した操作だからである。
+ *
+ * **読んでいた場所は行番号で保つ**（第9-3節と同じ手段）。行がずれるほど大きく
+ * 書き換えられていれば着地もずれるが、先頭に飛ぶよりはるかにましである。
+ */
+async function reloadFile(): Promise<void> {
+  if (!currentPath) {
+    notify("読み直す元のファイルがありません");
+    return;
+  }
+  if (dirty && Date.now() >= reloadArmedUntil) {
+    reloadArmedUntil = Date.now() + 5000;
+    notify(
+      "未保存の変更があります。\n" +
+        "もう一度 Mod+R を押すと、ファイルの内容で全体を置き換えます（変更は失われます）。\n" +
+        "残したいときは Mod+Shift+S で別名に保存してください。",
+    );
+    return;
+  }
+  reloadArmedUntil = 0;
+
+  const line = currentLine();
+  const loaded = await readFile(currentPath);
+  text = loaded.text;
+  baseDigest = loaded.digest;
+  externalChanged = false;
+  dirty = false;
+  refreshTitle();
+  if (view) {
+    const editor = await import("./editor");
+    editor.replaceDoc(view, loaded.text);
+    // replaceDoc が onChange を同期に呼ぶため、dirty はそのあとで落とす（openFile と同じ）。
+    dirty = false;
+    refreshTitle();
+  }
+  // **いま居るモードから動かさない。**読み直しは場所を変える操作ではない。
+  if (mode === "view") enterView(line);
+  else if (view) scrollEditorToLine(view, line);
+  notify("ファイルを読み直しました");
 }
 
 /**
@@ -671,6 +848,14 @@ window.addEventListener("keydown", (e) => {
   if (key === "e") {
     e.preventDefault();
     run("モードの切り替え", toggleMode);
+    return;
+  }
+  // ファイルを読み直す（第9-6節）。**ブラウザと同じ綴りなので、覚えることが
+  // 増えない**（第4節の第二優先）。webview 既定の再読み込みは release ビルドでは
+  // 効かないが、dev では効いてアプリごと作り直されるので preventDefault する。
+  if (key === "r") {
+    e.preventDefault();
+    run("ファイルの読み直し", reloadFile);
     return;
   }
   // 利用者 CSS を読み直す（第9-4節）。**`Mod+,` は多くの editor（VS Code、Zed）で
@@ -774,8 +959,10 @@ run("起動", async () => {
   await userCssAtStart;
   if (startup.path) {
     try {
-      text = await readFile(startup.path);
+      const loaded = await readFile(startup.path);
+      text = loaded.text;
       currentPath = startup.path;
+      baseDigest = loaded.digest;
       refreshTitle();
       enterView(0);
       return;

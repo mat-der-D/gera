@@ -76,12 +76,57 @@ export async function openExternal(url: string): Promise<void> {
   await invoke<null>("open_external", { url });
 }
 
-export async function readFile(path: string): Promise<string> {
-  return invoke<string>("read_file", { path });
+/**
+ * 読んだ本文と、そのときの指紋（第9-6節）。
+ *
+ * **指紋を別の口にせず、読んだら必ず一緒に返る。**別の口にすると「読んだが指紋を
+ * 取り損ねた」状態が作れてしまい、そこからの保存は突き合わせる相手を持たない
+ * ——つまり黙って上書きする。中身は Rust 側だけが決める文字列で、
+ * こちらは**等しいかどうかしか見ない。**
+ */
+export interface FileContents {
+  text: string;
+  digest: string;
 }
 
-export async function writeFile(path: string, contents: string): Promise<void> {
-  await invoke<null>("write_file", { path, contents });
+export async function readFile(path: string): Promise<FileContents> {
+  return invoke<FileContents>("read_file", { path });
+}
+
+/**
+ * いまディスクにある内容の指紋（第9-6節）。フォーカスが戻ったときと、
+ * それ以外に確かめたい場面で呼ぶ。
+ *
+ * **計算は Rust 側で行う。**本文を IPC で運んでこちらで数えるのは、
+ * 指紋を得るためだけに一往復を太らせることになる。
+ * 読めなければ例外である（消された・権限が変わった）。
+ */
+export async function fileDigest(path: string): Promise<string> {
+  return invoke<string>("file_digest", { path });
+}
+
+/**
+ * 書き込みの結果（第9-6節）。
+ *
+ * **食い違いは例外ではない。**例外は「保存という操作が失敗した」ことを表す形で、
+ * 呼び出し側では他の失敗と同じ帯になる。ここで起きているのは失敗ではなく
+ * **予定どおりの拒否**であり、利用者へ見せるものも違う（出口の案内）。
+ */
+export type Written = { kind: "saved"; digest: string } | { kind: "conflict" };
+
+/**
+ * 書き込む。`expect` を渡すと、Rust 側が**書く直前に**ディスクの内容と
+ * 突き合わせ、食い違っていれば書かずに `conflict` を返す（第9-6節）。
+ *
+ * **`expect` を `null` にすると突き合わせない。**別名保存が通る道である
+ * ——食い違っているときの唯一の出口なので、ここを塞ぐと逃げ場が無くなる。
+ */
+export async function writeFile(
+  path: string,
+  contents: string,
+  expect: string | null,
+): Promise<Written> {
+  return invoke<Written>("write_file", { path, contents, expect });
 }
 
 /**
