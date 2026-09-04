@@ -184,7 +184,7 @@ body { background: var(--bg); color: var(--fg); }
   top: 0;
   left: 0;
   right: 0;
-  height: 2px;
+  height: 6px;
   background: var(--accent);
   z-index: 20;
   pointer-events: none;
