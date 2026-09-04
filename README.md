@@ -62,6 +62,17 @@ Rust 側の責務はファイル入出力、ダイアログ、ウィンドウ状
 
 設計の詳細・実測値・判断の根拠は [docs/DESIGN.md](docs/DESIGN.md) にある。
 
+## Windows 版
+
+**GitHub Actions（`windows-latest`）でビルドしている。**開発機が Linux のため、Windows 版はここでしか作れない。
+
+- **試用版**——[Actions](../../actions/workflows/windows.yml) の最新の実行を開き、`gera-windows-installer`（インストーラ）または `gera-windows-exe`（素の実行ファイル）を落とす。**GitHub にログインしていないと落とせない**
+- **公開版**——[Releases](../../releases)。タグを打つと下書きができ、確認してから公開する
+
+**署名していないので、初回起動時に SmartScreen が「WindowsによってPCが保護されました」と警告を出す。****「詳細情報」→「実行」**で進める。
+
+**ユーザー CSS の置き場は `%APPDATA%\dev.smoothpudding.gera\user.css` と推定している。**これは Tauri の `app_config_dir()` の定義から導いた値であって、**Windows 実機では未検証である**（[docs/DESIGN.md](docs/DESIGN.md) 第 15 節）。確認したらここを直す。
+
 ## 想定利用者
 
 開発者と友人の二人。主に日本語で使う。開発するのは一人。友人へは Windows 版を GitHub Releases で配布する。

@@ -1,0 +1,103 @@
+# Windows 版のビルド。開発機は Linux（Ubuntu 24.04）で、Tauri の Windows 版は
+# クロスコンパイルできない——`windows-latest` を回すのが唯一の実用的な経路である
+# （docs/DESIGN.md 第 13 節）。
+#
+# 当面の目的は配布ではなく、**本人が自分の Windows 機で試せるようにすること**である
+# （IME・フォント・`.md` の関連付け・`user.css` の置き場・`Mod+,` が第 15 節に
+# 未検証として並んでいる）。したがって main への push で毎回作り、
+# 成果物をアーティファクトとして置く。
+name: Windows build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+# 同じブランチで走っている古い実行は打ち切る。待たされないことが目的なので、
+# 追い越された実行に runner を使わせない。ただしタグの実行は打ち切らない。
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    # タグのときだけ Releases へ下書きを作るので、そのときだけ書き込みを与える。
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # 版は開発機に合わせて固定してある（node 23.8.0 / npm 10.9.2、rustc 1.97.0）。
+      # 手元で通ったものと同じ道具で組むためで、上げるときは両方を実機に合わせて直す。
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '23.8.0'
+          cache: npm
+
+      - name: Install Rust 1.97.0
+        run: |
+          rustup toolchain install 1.97.0 --profile minimal --no-self-update
+          rustup default 1.97.0
+
+      # Rust のビルドは遅い。src-tauri/target を跨いで持ち回す。
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Show tool versions
+        run: |
+          node --version
+          npm --version
+          rustc --version
+
+      - run: npm ci
+
+      # tauri.conf.json の targets には deb も入っているが、それは Linux 用である。
+      # ここで作るものを明示して、設定の変更が黙って成果物を変えないようにする。
+      - name: Build (nsis + msi)
+        run: npm run tauri -- build --bundles nsis,msi
+
+      # インストーラ。`.md` の関連付けとショートカットはこちらでしか登録されない。
+      - uses: actions/upload-artifact@v7
+        with:
+          name: gera-windows-installer
+          path: |
+            src-tauri/target/release/bundle/nsis/*-setup.exe
+            src-tauri/target/release/bundle/msi/*.msi
+          if-no-files-found: error
+
+      # 素の実行ファイル。入れずに起動速度だけ見たいときのため。
+      - uses: actions/upload-artifact@v7
+        with:
+          name: gera-windows-exe
+          path: src-tauri/target/release/gera.exe
+          if-no-files-found: error
+
+      # タグ（v*）のときだけ Releases に置く。**下書きのまま置く**——
+      # 中身を本人が確かめてから公開する（勝手に公開しない）。
+      - name: Draft release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v3
+        with:
+          draft: true
+          fail_on_unmatched_files: true
+          files: |
+            src-tauri/target/release/bundle/nsis/*-setup.exe
+            src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/gera.exe
+          body: |
+            ## Windows 版
+
+            - `gera_*-setup.exe` — インストーラ（NSIS）。`.md` の関連付けとショートカットはこちらで登録される
+            - `gera_*.msi` — 同じものの MSI 版
+            - `gera.exe` — 素の実行ファイル。入れずに動かしたいとき用（関連付けは付かない）
+
+            **このバイナリは署名していない。**そのため Windows SmartScreen が
+            「WindowsによってPCが保護されました」と警告を出す。
+            **「詳細情報」→「実行」**で進められる。
