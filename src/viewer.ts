@@ -469,6 +469,25 @@ export function setFile(file: { name: string; path: string } | null): void {
   applyFileLabel();
 }
 
+/**
+ * ファイル名と、`F1` があることの案内を、渡した要素に入れる。
+ *
+ * **閲覧と編集で同じ見え方にする**ため、両方からここを通す（編集側の器は
+ * main.ts が持つ）。**gera は本文以外の常設 UI を持たない**（設計 第9節）ので、
+ * **一覧が出せても、出せることを知らなければ意味がない。**新しい場所を作らず、
+ * 既にあるファイル名の隣に添えるのは、**そこが本文の流れの中にあり、送れば
+ * 一緒に流れて消えるから**である——常設 UI にはならない。見た目は style.css。
+ */
+export function fillFileLabel(el: HTMLElement, name: string): void {
+  const label = document.createElement("span");
+  label.className = "gera-file-name";
+  label.textContent = name;
+  const tip = document.createElement("span");
+  tip.className = "gera-keys-tip";
+  tip.textContent = "F1 キー一覧";
+  el.replaceChildren(label, tip);
+}
+
 function applyFileLabel(): void {
   if (!body) return; // まだ一度も描いていない。次の renderInto が置く
   if (!fileInfo) {
@@ -480,7 +499,7 @@ function applyFileLabel(): void {
     fileLabel = document.createElement("div");
     fileLabel.className = "gera-file";
   }
-  fileLabel.textContent = fileInfo.name;
+  fillFileLabel(fileLabel, fileInfo.name);
   fileLabel.title = fileInfo.path;
   // body.innerHTML の差し替えで消えるので、そのたびに置き直す。
   if (body.firstChild !== fileLabel) body.prepend(fileLabel);

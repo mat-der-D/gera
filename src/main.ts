@@ -179,6 +179,7 @@ function refreshStatus(): void {
   refreshTitle();
   refreshDirtyMark();
   refreshFileLabels();
+  refreshEmptyHint();
 }
 
 /** 未保存の印。**要るまで作らない**——起動して読むだけの経路では一度も作られない。 */
@@ -229,7 +230,9 @@ function refreshFileLabels(): void {
     editFileLabel.className = "gera-file";
     view.scrollDOM.append(editFileLabel);
   }
-  editFileLabel.textContent = name;
+  // 名前と `F1` の案内は viewer.ts と同じ組み立てを通す。**閲覧と編集で
+  // 見え方が違うと、どちらのモードに居るかで混乱する。**
+  viewer.fillFileLabel(editFileLabel, name);
   // **フルパスは title 属性に入れる。**本文の頭に出すには長すぎるが、
   // どこのファイルかを確かめる手段は要る。
   editFileLabel.title = currentPath;
@@ -618,6 +621,65 @@ async function toggleFind(): Promise<void> {
   });
 }
 
+// ---------------------------------------------------- キー操作の一覧（F1）
+
+/**
+ * キー操作の一覧（`F1`）。**gera は本文以外の常設 UI を持たない**（第9節）ので、
+ * メニューもツールバーも無く、**操作を知る手掛かりが画面に一つも無い。**
+ * 利用者は本人と友人の二人で（第3節）、**友人は初めて起動したときに何もできない。**
+ *
+ * **`F1` にした理由。**Windows でも Linux でもヘルプの綴りとして通っており、
+ * **既に指に入っている綴りなら覚えることが増えない**（第4節の第二優先）。`?` は
+ * 編集モードで文字入力とぶつかるので採れない。**修飾キーを伴わないので、
+ * gera が既に使っている `Mod+…` のどれとも衝突しない。**
+ *
+ * **閲覧・編集の両モードで効く。**受け口が window にあるので（下の keydown）、
+ * CodeMirror の keymap と取り合いにならない。`F1` は CodeMirror の既定にも無い。
+ *
+ * **中身は動的 import で別チャンクに置く**（見出しの一覧・検索と同じ形）。
+ * 起動して閲覧するだけの経路では一度も読み込まれない（第4節の第一優先）。
+ */
+let keys: typeof import("./keys") | null = null;
+
+async function toggleKeys(): Promise<void> {
+  const ui = (keys ??= await import("./keys"));
+  // keys.css も遅れて入る。利用者 CSS をその後ろへ押し戻す（toggleOutline と同じ理由）。
+  raiseUserCss();
+  if (ui.isOpen()) {
+    ui.close();
+    return;
+  }
+  ui.open({ restore: focusCurrent });
+}
+
+/**
+ * 空の文書のときだけ、控えめな一覧を編集モードの器に出す（第9-6節）。
+ *
+ * **引数なしで起動すると編集モードで真っ白になる。表示するものが無い瞬間なので、
+ * ここに一覧を出しても画面を何も奪わない。**そして**友人の初回起動は、おそらく
+ * この状態である**（第3節）。**常設 UI ではない**（第9節）——文書が空という
+ * 状態があるときだけ出て、何か打てば消える。
+ *
+ * **打鍵のたびに呼ばれる**（`refreshStatus`）。**まだ読み込んでいなければ何もしない**
+ * ——ここで動的 import を投げると、打っている最中に読み込みが走ることになる。
+ * 最初に出すのは起動処理（`showEmptyHint`）だけで、以降はその出し入れである。
+ */
+function refreshEmptyHint(): void {
+  if (!keys || !view) return;
+  if (text) keys.hideHint();
+  else keys.showHint(view.scrollDOM);
+}
+
+/** 起動時に一度だけ。空の文書で編集モードに着いたときに読み込んで出す。 */
+async function showEmptyHint(): Promise<void> {
+  if (text || !view) return;
+  const ui = (keys ??= await import("./keys"));
+  raiseUserCss();
+  // **待っている間に打たれていたら出さない。**空でなくなった文書に一覧は要らない。
+  if (text || !view) return;
+  ui.showHint(view.scrollDOM);
+}
+
 // -------------------------------------------------------------- 字の大きさ
 
 /**
@@ -924,6 +986,16 @@ async function reloadFile(): Promise<void> {
  * CodeMirror 側の既定 keymap に残す（読み専用のはずの画面から本文が変わらないように）。
  */
 window.addEventListener("keydown", (e) => {
+  // **キー操作の一覧（`F1`）だけは修飾キーを伴わない**ので、下の門より前で受ける。
+  // 出したまま別の道具を開いたままにしない——見えている覆いは一つで足りる。
+  if (e.key === "F1" && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && !e.isComposing) {
+    e.preventDefault();
+    outline?.close();
+    find?.close();
+    run("キー操作の一覧", toggleKeys);
+    return;
+  }
+
   if (!(e.metaKey || e.ctrlKey) || e.altKey || e.isComposing) return;
   const key = e.key.toLowerCase();
 
@@ -932,6 +1004,8 @@ window.addEventListener("keydown", (e) => {
   if (outline?.isOpen() && !(key === "o" && e.shiftKey)) outline.close();
   // 検索も同じ扱いにする。`Mod+F` 自身だけは通す（開いていれば入力欄へ戻る）。
   if (find?.isOpen() && key !== "f") find.close();
+  // 一覧を出したまま別の操作をしたら、その一覧はもう用済みである（`F1` は上で受けた）。
+  if (keys?.isOpen()) keys.close();
 
   // 見出しへ飛ぶ（第9-2節）。VS Code の「ファイル内のシンボルへ移動」と同じ綴りに
   // 揃えてある——**既に指に入っている操作なら、覚えることが増えない**（第4節）。
@@ -1094,4 +1168,6 @@ run("起動", async () => {
     return;
   }
   await enterEdit();
+  // **空の文書で始まった。**画面には何も無いので、ここに一覧を出しても何も奪わない。
+  await showEmptyHint();
 });

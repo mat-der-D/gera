@@ -1,0 +1,131 @@
+/* キー操作の一覧の見た目（設計 第9節）。
+   keys.ts からのみ import される。**`F1` を押すか、空の文書で始まるまで
+   読み込まれない**ので、起動時の費用にならない（第4節の第一優先）。
+
+   **ここに現れるクラス名は公開 API である**（第9-4節）。利用者が自分の CSS で
+   見た目を変えられることが要件なので、名前を変えるときは docs/CSS.md も直すこと。
+   （`.gera-keys-tip` だけは style.css にある——ファイル名の隣に常に出るものなので、
+   このファイルの読み込みを待てない。）
+
+   **寸法はすべて rem で書く。**`--font-scale`（`Mod +/-`）が動かすのは**版面**——
+   読んでいる本文の大きさ——であって、道具の大きさではない（outline.css と同じ理由）。
+
+   **色は style.css の変数だけで作る。**ダークモードは変数の側で切り替わるので、
+   ここに `prefers-color-scheme` を書く必要がない。
+
+   **移り変わり（transition / animation）を書かない。**出入りにアニメーションを
+   付けると、そのあいだ毎フレーム描画が走る。アイドル中に 60fps で描き続ける
+   不具合を直したばかりである（第5-10節）。 */
+
+/* ------------------------------------------------------------ F1 の覆い */
+
+/* 見出しの一覧（outline.css）と同じ作法で組む。**既にある部品と見た目が違うと、
+   それだけで「別のもの」に見えて覚えることが増える**（第4節の第二優先）。 */
+.gera-keys {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  /* 本文を薄く伏せる。**隠すためではなく、一覧が本文の一部でないことを示すため**で、
+     下の文字が読める濃さに留める。 */
+  background: color-mix(in srgb, var(--bg) 72%, transparent);
+  display: flex;
+  justify-content: center;
+  /* **中身の高さで留める。**既定の stretch だと箱だけが画面の高さのまま残る。 */
+  align-items: flex-start;
+  padding: 8vh 1.5rem 1.5rem;
+  box-sizing: border-box;
+}
+
+.gera-keys-box {
+  width: 100%;
+  max-width: 30rem;
+  max-height: 100%;
+  box-sizing: border-box;
+  overflow-y: auto;
+  padding: 1.1rem 1.4rem 1.3rem;
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  /* 覆いが半透明なので、枠だけでは本文と地続きに見える。影で一枚持ち上げる。 */
+  box-shadow: 0 0.5rem 2rem color-mix(in srgb, var(--fg) 20%, transparent);
+  outline: none; /* 焦点を受けるために tabindex を持つが、枠は出さない */
+}
+
+/* ---------------------------------------------------------------- 一覧本体 */
+
+/* **キーと意味を二列で揃える。**縦に揃っていないと、探しているキーを目で追えない。
+   左の列は中身の幅で決まる（`max-content`）ので、綴りの長短で列が動かない。 */
+.gera-keys-list {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: 1.2rem;
+  row-gap: 0.15rem;
+  align-items: baseline;
+}
+
+/* キーの綴りは等幅。**打つ文字そのもの**なので、地の文と同じ書体では埋もれる。
+   色は `--accent`——gera が「ここが要点」に使っている色である（style.css）。 */
+.gera-keys-key {
+  font: 0.85rem/1.8 var(--font-mono);
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+/* 意味はゴシック。**明朝で組まれるのは本文だけで、それがモード表示でもある**（第5節）。 */
+.gera-keys-desc {
+  font: 0.9rem/1.8 var(--font-sans);
+  color: var(--fg);
+}
+
+/* 群の見出し。**主たる一覧との差が付けばよい**ので、小さく薄くするだけに留める。
+   **二列ぶんを跨がせる。**群ごとに格子を分けるとキーの列の幅が群ごとに変わり、
+   綴りが縦に揃わなくなる（keys.ts の buildList）。 */
+.gera-keys-group {
+  grid-column: 1 / -1;
+  font: 0.75rem/1.6 var(--font-sans);
+  letter-spacing: 0.04em;
+  color: var(--dim);
+  margin: 1.1rem 0 0.35rem;
+}
+
+/* -------------------------------------------- 空の文書のときの控えめな一覧 */
+
+/* **引数なしで起動すると編集モードで真っ白になる**（第9-6節）。表示するものが
+   無い瞬間なので、ここに一覧を出しても画面を何も奪わない。**友人の初回起動は
+   おそらくこの状態である**（第3節）。
+
+   **覆いにしない。**空の文書で利用者ができることは「書き始める」ことであり、
+   閉じさせる形は目的と逆を向く（keys.ts 冒頭）。
+
+   置き場は `.gera-file` と同じ——CodeMirror の本文ではなくスクロールする器
+   （`.cm-scroller`）の中に絶対配置する。**器が `position: relative` なので、
+   絶対配置でも中身と一緒にスクロールする。**out of flow なので flex の並びにも
+   入らず、本文の幅も高さも奪わない。
+
+   横位置は `.cm-content` に合わせる（style.css の `.gera-file` と同じ組み立て）。
+   左だけ 6px 多いのは `.cm-line` の左余白ぶんである。
+
+   上端の 5rem は `.cm-content` の上余白 3.5rem より下、つまり**カーソルのある
+   一行目より下**に置くためのものである。 */
+#app .cm-scroller > .gera-keys-hint {
+  position: absolute;
+  top: 5rem;
+  left: 0;
+  right: 0;
+  margin: 0 auto;
+  box-sizing: border-box;
+  width: min(100%, calc(42 * var(--font-size-edit) * var(--font-scale)));
+  padding: 0 1.5rem 0 calc(1.5rem + 6px);
+  /* **打鍵の邪魔をしない。**文字の選択もカーソルの移動も、この要素が奪わない。 */
+  pointer-events: none;
+}
+
+/* **覆いより更に薄く出す。**これから書く紙の上に置くものなので、書き始めた文字と
+   競ってはならない。打てば消えるものであり、読ませるためのものではない。 */
+.gera-keys-hint .gera-keys-key,
+.gera-keys-hint .gera-keys-desc {
+  color: var(--dim);
+}
+.gera-keys-hint .gera-keys-group {
+  color: color-mix(in srgb, var(--dim) 70%, var(--bg));
+}
