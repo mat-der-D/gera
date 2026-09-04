@@ -58,10 +58,15 @@ jobs:
 
       - run: npm ci
 
-      # tauri.conf.json の targets には deb も入っているが、それは Linux 用である。
-      # ここで作るものを明示して、設定の変更が黙って成果物を変えないようにする。
+      # 作るものは tauri.conf.json の targets が決める。deb も入っているが、
+      # Tauri が OS に合わないものを自分で外すので Windows では nsis と msi になる。
+      #
+      # **--bundles で明示しないこと。**Windows の cmd.exe はカンマを引数の
+      # 区切りとして扱うため、`--bundles nsis,msi` が `'nsis msi'` に化けて
+      # cargo build まで流れ、`unexpected argument` で落ちた（2026-09-04 の実測）。
+      # 設定が変わって成果物が消えた場合は、下の if-no-files-found: error が捕まえる。
       - name: Build (nsis + msi)
-        run: npm run tauri -- build --bundles nsis,msi
+        run: npm run tauri -- build
 
       # インストーラ。`.md` の関連付けとショートカットはこちらでしか登録されない。
       - uses: actions/upload-artifact@v7
