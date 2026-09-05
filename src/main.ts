@@ -1,17 +1,20 @@
-// `import "./style.css"` の型。vite が `*.css` の宣言をここで持ち込む。
+// Types for `import "./style.css"`. vite brings the `*.css` declarations in here.
 /// <reference types="vite/client" />
 
 /**
- * 起動と、本文の出入り口。設計 第9節の実装順序 1・2。
+ * Startup, and the entry and exit points for the document text. Implementation
+ * order 1 and 2 of DESIGN.md §9.
  *
- * **起動時に読むのは閲覧モードだけである。**gera はほとんどビューアーであり
- * （第1節）、起動して着く先も閲覧モードである。編集モード（CodeMirror）は
- * `Mod+E` を押すか、空の文書で始まったときに初めて読む（このファイルの
- * `ensureEditor`）。逆——閲覧を動的 import にして CodeMirror を初期チャンクに
- * 置く形——だと、**その起動では使わないコードを毎回読むことになる。**
+ * At startup we load view mode only. gera is mostly a viewer (§1), and the place
+ * a launch lands is view mode too. Edit mode (CodeMirror) is loaded only when
+ * `Mod+E` is pressed, or when we start with an empty document (`ensureEditor` in
+ * this file). The reverse arrangement — making the viewer a dynamic import and
+ * putting CodeMirror in the initial chunk — would mean loading code that that
+ * particular launch never uses, every single time.
  *
- * したがって本文の正は CodeMirror ではなくこのファイルの `text` が持つ。
- * CodeMirror が居ない起動が普通にあるので、本文の置き場をそちらに預けられない。
+ * So the authoritative copy of the document text lives in `text` in this file,
+ * not in CodeMirror. Launches with no CodeMirror at all are routine, so the text
+ * cannot be entrusted to it.
  */
 import "./style.css";
 import * as viewer from "./viewer";
@@ -31,50 +34,57 @@ import {
   writeFile,
 } from "./host";
 import { reportFontResolution } from "./fonts";
-// 型だけを取る。**実体は動的 import でしか読まない**ので、起動時の初期チャンクに
-// 検索の UI は入らない（下の toggleFind）。
+// Type-only import. The implementation is loaded through a dynamic import and
+// nothing else, so the find UI stays out of the initial startup chunk (see
+// toggleFind below).
 import type { FindMatch } from "./find";
 
-/** 本文の正。CodeMirror が居ない起動があるので、置き場をそちらに預けない。 */
+/** The authoritative document text. Launches without CodeMirror exist, so it cannot live there. */
 let text = "";
 let currentPath: string | null = null;
 let dirty = false;
 
 /**
- * **いまの本文が、どのファイルのどの版から来たか**（第9-6節）。
+ * Which file, and which version of it, the current text came from (§9-6).
  *
- * 読んだとき・保存できたときに、その時点の内容の指紋（Rust 側が作る文字列）を
- * ここに入れる。外部からの書き換えは、これと**いまディスクにあるもの**の
- * 突き合わせで見つかる。**mtime ではなく内容で見る**——mtime は中身が同じでも
- * 動くため、偽の知らせを出す（host.ts の fileDigest）。
+ * On a successful read or save, the digest of the content at that moment (a
+ * string produced on the Rust side) goes here. External modifications are found
+ * by comparing this against what is on disk right now. We compare content, not
+ * mtime — mtime moves even when the content is identical, which produces false
+ * alarms (fileDigest in host.ts).
  *
- * `null` なのは、ファイルから来ていない本文（無題、退避からの復元）である。
- * 突き合わせる相手が無いので、検知も拒否も行わない。
+ * `null` means text that did not come from a file (untitled, or restored from
+ * the stash). There is nothing to compare against, so we neither detect nor
+ * refuse anything.
  */
 let baseDigest: string | null = null;
 
 /**
- * 外部で書き換えられたことを、もう知らせたか（第9-6節）。
+ * Whether the external modification has already been announced (§9-6).
  *
- * フォーカスが戻るたびに帯を出し直すと、読み直さない限り毎回出ることになって
- * うるさい。**知らせるのは食い違いを見つけた最初の一度だけ**にして、
- * 読み直すか保存できたところで倒す。
+ * Re-showing the banner every time focus returns means it appears every time
+ * until you reload, which is noisy. We announce only the first time the mismatch
+ * is found, and clear it once the file is reloaded or saved.
  */
 let externalChanged = false;
-// 退避を読むまでは、どちらのモードに着くかが決まらない。中身のある文書なら閲覧、
-// 空なら編集である（このファイル末尾の起動処理）。
+// Which mode we land in is undecided until the stash has been read. A document
+// with content lands in view mode, an empty one in edit mode (see the startup
+// code at the end of this file).
 let mode: "edit" | "view" = "view";
 
-// ---------------------------------------------------------------- 失敗の通知
+// ---------------------------------------------------------- failure notification
 
 /**
- * 常設 UI を持たない（第5節）ため、失敗を出す先が画面に無い。
+ * There is no permanent UI (§5), so there is nowhere on screen to report a failure.
  *
- * console には必ず出したうえで、数秒で消える帯を画面下部に出す。
- * 常設しない・本文に触れない・面積を奪わないので、第5節には反しない。
- * 帯に出すのは、画面に現れない結果だけである。保存の成功はタイトルバーの中黒が
- * 消えることで既に見えているから黙る。クリップボードへの出力は成功しても画面が
- * 何も変わらないため、黙ると動いたかどうかが利用者に分からない。
+ * We always log to the console, and additionally show a banner at the bottom of
+ * the screen that disappears after a few seconds. It is not permanent, does not
+ * touch the document text, and takes no space away from it, so it does not
+ * violate §5. The banner reports only results that are invisible on screen. A
+ * successful save is already visible as the bullet disappearing from the title
+ * bar, so it stays silent. Copying to the clipboard changes nothing on screen
+ * even when it succeeds, so staying silent would leave the user unable to tell
+ * whether anything happened.
  */
 let noticeTimer: number | undefined;
 
@@ -83,8 +93,9 @@ function notify(message: string): void {
   if (!bar) {
     bar = document.createElement("div");
     bar.id = "notice";
-    // style.css は地色と書体だけを受け持つ（同ファイル冒頭）ので、
-    // 一時的なこの要素の見た目はここに置く。色は変数を借りて本文から浮かせない。
+    // style.css only owns the background color and the typefaces (see the top of
+    // that file), so the appearance of this transient element lives here. The
+    // colors borrow the variables so it does not float off the document.
     bar.style.cssText = [
       "position:fixed",
       "left:50%",
@@ -107,7 +118,7 @@ function notify(message: string): void {
   noticeTimer = window.setTimeout(() => bar.remove(), 5000);
 }
 
-/** 非同期の処理を投げっぱなしにしない。握り潰すと、保存の失敗が成功に見える。 */
+/** Never fire an async task and forget it. Swallowing the error makes a failed save look like a success. */
 function run(what: string, task: () => Promise<void>): void {
   void task().catch((e: unknown) => {
     console.error(`[gera] ${what}に失敗`, e);
@@ -115,9 +126,9 @@ function run(what: string, task: () => Promise<void>): void {
   });
 }
 
-// ------------------------------------------------------------ タイトルと退避
+// -------------------------------------------------------------- title and stash
 
-/** パス区切りは配布先の Windows を考慮して両方で切る（第1節）。 */
+/** Split on both path separators, because Windows is a distribution target (§1). */
 function baseName(path: string): string {
   const parts = path.split(/[/\\]/);
   return parts[parts.length - 1] ?? path;
@@ -126,13 +137,15 @@ function baseName(path: string): string {
 let lastTitle: string | null = null;
 
 /**
- * dirty の印は先頭の中黒だけにする。
- * タイトルバーは OS の領分なので、状態表示をここに逃がせる（host.ts の setWindowTitle）。
+ * The only dirty marker is the leading bullet.
+ * The title bar belongs to the OS, so state display can be offloaded there
+ * (setWindowTitle in host.ts).
  *
- * setWindowTitle は Rust への IPC を一往復する。この関数は打鍵のたびに——IME の
- * 変換中は一文字を確定する前にも何度も——呼ばれるが、タイトルは currentPath と
- * dirty からしか決まらず、その大半では変わらない。だから最後に送った文字列を憶えて
- * おき、実際に変わったときだけ送る。
+ * setWindowTitle costs a round trip of IPC to Rust. This function is called on
+ * every keystroke — during IME composition, several times before a single
+ * character is even committed — but the title is determined solely by
+ * currentPath and dirty, and for most of those calls it does not change. So we
+ * remember the last string sent and send only when it actually changed.
  */
 let titleQueue: Promise<void> = Promise.resolve();
 
@@ -141,36 +154,40 @@ function refreshTitle(): void {
   const title = `${dirty ? "• " : ""}${name} — gera`;
   if (title === lastTitle) return;
   lastTitle = title;
-  // **順に流す。**setWindowTitle は IPC なので、投げっぱなしだと到着順が
-  // 保証されない。実測（2026-09-04、WAYLAND_DEBUG）で、JS 側が
-  // 「無題 → probe.md」の順に送ったものが「probe.md → 無題」の順で届き、
-  // **正しいタイトルが誤ったタイトルに上書きされていた。**
+  // Send them in order. setWindowTitle is IPC, so firing and forgetting gives no
+  // guarantee about arrival order. Measured (2026-09-04, WAYLAND_DEBUG): what
+  // the JS side sent as "無題 → probe.md" arrived as "probe.md → 無題", and the
+  // correct title was overwritten by the stale one.
   titleQueue = titleQueue
     .then(() => setWindowTitle(title))
     .catch((e: unknown) => console.error("[gera] タイトルの更新に失敗", e));
 }
 
-// ------------------------------------------------ 状態を本文側にも出す
+// ------------------------------------------ surface state in the document area too
 
 /**
- * **タイトルバーは当てにできない**（2026-09-04）。
+ * The title bar cannot be relied on (2026-09-04).
  *
- * 上の `refreshTitle` は `• DESIGN.md — gera` を正しく送っており、
- * `WAYLAND_DEBUG=1` で `xdg_toplevel.set_title` が飛んでいることも確かめてある。
- * それでも**本人の環境（ネイティブ Wayland / GNOME）では初期値の `gera` のまま
- * 描かれる**（スクリーンショットで確認）。`GDK_BACKEND=x11` を強制すると正しく
- * 出るので、GTK と mutter の領分の問題であり、アプリ側から手が届かない。
- * **X11 に逃げる道は無い**——コールド起動が 560 ms 遅くなる（第5-8節）。
+ * `refreshTitle` above does send `• DESIGN.md — gera` correctly, and
+ * `xdg_toplevel.set_title` has been confirmed to go out with `WAYLAND_DEBUG=1`.
+ * Even so, on the owner's own environment (native Wayland / GNOME) it is drawn
+ * as the initial `gera` (confirmed by screenshot). Forcing `GDK_BACKEND=x11`
+ * makes it appear correctly, so this is GTK and mutter territory and the app
+ * cannot reach it. Escaping to X11 is not an option — it costs 560 ms more on a
+ * cold start (§5-8).
  *
- * **タイトルの設定は消さずに残す。**X11 では効いており、Windows でも効く見込みが
- * ある。ここで足すのは、それが効かない環境のための**もう一本の経路**である。
+ * Keep the title setting; do not remove it. It works on X11, and it is expected
+ * to work on Windows. What we add here is a second path for the environments
+ * where it does not work.
  *
- * 出すものは二つで、**性質が違うので形も分けた。**
+ * There are two things to surface, and since they differ in nature they take
+ * different forms.
  *
- * - **未保存かどうか**（`.gera-dirty`）——**読んでいる最中も視界に入る必要がある。**
- *   窓の上端に細い線を一本出す。本文の幅を奪わず、目を離さなくても気づける
- * - **どのファイルか、そして `F1` があること**（`.gera-file`）——**画面の左上に
- *   常に出す**（下の `refreshFileLabel`）
+ * - Whether there are unsaved changes (`.gera-dirty`) — this has to be in view
+ *   even while reading. A single thin line at the top edge of the window. It
+ *   takes no width from the document and is noticeable without looking away
+ * - Which file this is, and that `F1` exists (`.gera-file`) — always shown in the
+ *   top left of the screen (`refreshFileLabel` below)
  */
 function refreshStatus(): void {
   refreshTitle();
@@ -179,7 +196,7 @@ function refreshStatus(): void {
   refreshEmptyHint();
 }
 
-/** 未保存の印。**要るまで作らない**——起動して読むだけの経路では一度も作られない。 */
+/** The unsaved marker. Not created until it is needed — a launch that only reads never creates it. */
 let dirtyMark: HTMLElement | null = null;
 
 function refreshDirtyMark(): void {
@@ -188,49 +205,61 @@ function refreshDirtyMark(): void {
     dirtyMark = document.createElement("div");
     dirtyMark.className = "gera-dirty";
     document.body.append(dirtyMark);
-    return; // 作った時点で dirty。既定で見えているので触らない
+    return; // dirty by definition at creation time. Visible by default, so leave it alone
   }
-  // **打鍵のたびに呼ばれる。**同じ値でも属性に書くと様式の計算をやり直させるので、
-  // 変わったときだけ触る（第5-10節の「静止していればフレームが出ない」を守る）。
+  // This is called on every keystroke. Writing an attribute even with the same
+  // value forces style recalculation, so touch it only when it changed (this
+  // upholds "no frames are produced while at rest" from §5-10).
   if (dirtyMark.hidden === !dirty) return;
   dirtyMark.hidden = !dirty;
 }
 
 /**
- * 開いているファイルの名前と、`F1` があることの案内を、**画面の左上に常に出す。**
+ * Always show the name of the open file, and the hint that `F1` exists, in the
+ * top left of the screen.
  *
- * **2026-09-04、本人の指示で常設に変えた**（逐語）:
+ * Changed to a permanent element on 2026-09-04 at the owner's instruction
+ * (verbatim):
  *
- * > **左上に常に表示されているほうがいいですね。**
- * > なんなら**ファイル名も上部にずっと表示されてる**ほうがいいかも。
+ * > 「左上に常に表示されているほうがいいですね。
+ * > なんなら**ファイル名も上部にずっと表示されてる**ほうがいいかも。」
+ * > ("Having it always shown in the top left would be better. Actually, having
+ * > the file name permanently at the top would be good too.")
  *
- * それまでは、閲覧側は本文の流れの先頭、編集側は `.cm-scroller` の中に絶対配置と、
- * **モードごとに二箇所へ置いており、どちらも少し送れば流れて消えた。**
+ * Until then it lived in two places depending on the mode — at the head of the
+ * document flow on the view side, absolutely positioned inside `.cm-scroller` on
+ * the edit side — and in both cases it scrolled away after a little scrolling.
  *
- * **これは設計 第9節「本文以外の常設 UI を置かない」を緩める判断である。**第9節は
- * 既に「初版の出発点であって恒久的な禁止ではない」と訂正されており、本人の
- * 「まずスタートとしてはそれぐらいシンプルに作って、すこしずつ機能を足せばよい」と
- * いう方針の内側にある。**とはいえ常設にする以上、代償は最小にする**——版面の幅を
- * 一切狭めず（`position: fixed` で版面の外に居る）、本文の先頭も隠さず、地色を
- * 敷いて送った本文と文字が重ならないようにした。詳しくは style.css の側に書いた。
+ * This is a decision to relax "no permanent UI other than the document text"
+ * from DESIGN.md §9. §9 has already been corrected to say it is "the starting
+ * point of the first version, not a permanent prohibition", and this sits inside
+ * the owner's stated direction: "build it that simply as a start, then add
+ * features little by little". That said, since it is permanent, the cost is kept
+ * minimal — it does not narrow the text column at all (`position: fixed` puts it
+ * outside the column), it does not hide the start of the document, and it has a
+ * background so scrolled text does not overlap its characters. Details are
+ * written on the style.css side.
  *
- * **窓に固定なので、閲覧・編集の両モードで同じ位置・同じ見た目になる。**置き場が
- * 一つになったので、`viewer.ts` 側の本文への差し込みも無くなった——**そのぶん
- * 段階的描画の枠（`EAGER = 8`）を一つ食っていたのも解消している。**
+ * Because it is fixed to the window, it has the same position and the same
+ * appearance in both view and edit mode. With a single place to live, the
+ * injection into the document on the `viewer.ts` side is gone too — which also
+ * frees up one of the eager rendering slots (`EAGER = 8`) it had been consuming.
  *
- * **要素は一度だけ作り、以後は中身だけを入れ替える。**この関数は打鍵のたびに
- * ——IME の変換中は一文字を確定する前にも何度も——呼ばれるので、
- * **変わっていないときに DOM へ触らない**（第5-10節の「静止していればフレームが
- * 出ない」を守る）。
+ * The element is created once and only its contents are swapped afterwards. This
+ * function is called on every keystroke — during IME composition, several times
+ * before a single character is even committed — so do not touch the DOM when
+ * nothing changed (this upholds "no frames are produced while at rest" from
+ * §5-10).
  *
- * **フルパスは `title` 属性に入れる。**左上に出すには長すぎるが、どこのファイルかを
- * 確かめる手段は要る。
+ * The full path goes into the `title` attribute. It is too long to show in the
+ * top left, but a way to check which file this actually is, is still needed.
  */
 let fileLabel: HTMLElement | null = null;
 let fileLabelName: HTMLElement | null = null;
 let fileLabelTip: HTMLElement | null = null;
-/** いま札に入れてある名前。**`undefined` は「まだ一度も入れていない」**——`null`
- * （無題）と区別が付かないと、無題で始まった起動で名前の箱を畳み損ねる。 */
+/** The name currently in the label. `undefined` means "never set at all" — without
+ * distinguishing it from `null` (untitled), a launch that starts untitled fails to
+ * collapse the name box. */
 let shownFileName: string | null | undefined;
 
 function refreshFileLabel(): void {
@@ -250,51 +279,56 @@ function refreshFileLabel(): void {
   shownFileName = name;
   if (!fileLabelName) return;
   fileLabelName.textContent = name ?? "";
-  // **無題のときは名前の箱ごと畳む。**空の箱を残すと、flex の間隔（1.4em）だけが
-  // 残って案内が理由もなく右へずれる。**案内のほうは無題でも出す**——ファイル名が
-  // 無いことは `F1` を知らせない理由にならず、むしろ無題で始まるのは初めて
-  // 起動した人である見込みが高い（第3節）。
+  // When untitled, collapse the whole name box. Leaving an empty box behind
+  // leaves the flex gap (1.4em) in place and shifts the hint to the right for no
+  // reason. The hint itself is shown even when untitled — having no file name is
+  // not a reason to withhold `F1`, and if anything, someone starting untitled is
+  // likely to be someone launching for the first time (§3).
   fileLabelName.hidden = !name;
   if (currentPath) fileLabel.title = currentPath;
   else fileLabel.removeAttribute("title");
 }
 
 /**
- * 空の文書の控えめな一覧（`.gera-keys-hint`）が出ている間だけ、左上の案内を畳む。
+ * Collapse the top-left hint only while the unobtrusive key list for an empty
+ * document (`.gera-keys-hint`) is showing.
  *
- * **同じことを二度言わない。**一覧には `F1` の行も入っており、その真上に
- * 「F1 キー一覧」と出ていても伝わるものが増えない。**一覧が消えれば戻る。**
+ * Do not say the same thing twice. The list already contains a row for `F1`, and
+ * showing "F1 キー一覧" directly above it conveys nothing more. It comes back
+ * once the list is gone.
  */
 function refreshTipVisibility(hintShown: boolean): void {
   if (!fileLabelTip) return;
-  if (fileLabelTip.hidden === hintShown) return; // 打鍵のたびに呼ばれる経路
+  if (fileLabelTip.hidden === hintShown) return; // a path taken on every keystroke
   fileLabelTip.hidden = hintShown;
 }
 
 let stashTimer: number | undefined;
 
 /**
- * 不可視の自動退避（第11節）。落ちて全部消える経路を塞ぐためだけのもので、
- * 成否は UI に出さない。打鍵のたびに書かないよう、静まってから一度だけ走らせる。
+ * The invisible automatic stash (§11). Its only job is to close off the path
+ * where a crash loses everything, so success or failure is not surfaced in the
+ * UI. To avoid writing on every keystroke, it runs once after things go quiet.
  */
 function scheduleStash(latest: string): void {
   window.clearTimeout(stashTimer);
   stashTimer = window.setTimeout(() => {
     void saveSession({ path: currentPath, text: latest }).catch((e: unknown) => {
-      // 退避の失敗は利用者の操作に対する応答ではないため、帯は出さず log だけに残す。
+      // A failed stash is not a response to any user action, so no banner — leave it in the log only.
       console.error("[gera] 自動退避に失敗", e);
     });
   }, 800);
 }
 
-// ------------------------------------------------------------ 編集モードの遅延
+// ------------------------------------------------------------ deferring edit mode
 
 /**
- * 編集モード一式（CodeMirror）を読み込み、まだ無ければ作る。
+ * Load the whole edit mode (CodeMirror), and create it if it does not exist yet.
  *
- * **起動時には呼ばない。**呼ぶのは `Mod+E` と、空の文書で始まったときだけである。
- * `@codemirror/view` を名前空間ごと動的に取るのは、`EditorView.scrollIntoView`
- * が実行時の値だからである。`./editor` と同じチャンクに入るので費用は増えない。
+ * Never called at startup. It is called only by `Mod+E`, and when we start with
+ * an empty document. `@codemirror/view` is taken dynamically as a whole
+ * namespace because `EditorView.scrollIntoView` is a runtime value. It lands in
+ * the same chunk as `./editor`, so it costs nothing extra.
  */
 let view: EditorView | null = null;
 let cm: typeof import("@codemirror/view") | null = null;
@@ -303,10 +337,11 @@ async function ensureEditor(app: HTMLElement): Promise<EditorView> {
   if (view) return view;
   const [cmView, editor] = await Promise.all([import("@codemirror/view"), import("./editor")]);
   cm = cmView;
-  // 遅れて入った CSS より後ろへ、利用者 CSS を押し戻す。
+  // Push the user CSS back behind the CSS that just arrived late.
   raiseUserCss();
-  // 本文を入れると updateListener が走って dirty が立つ。中身を移しただけで
-  // 「変更あり」にはしない——保存していない状態かどうかは text 側の履歴で決まる。
+  // Inserting the text runs updateListener and raises dirty. Merely moving the
+  // content across must not mean "modified" — whether the state is unsaved is
+  // determined by the history on the text side.
   const was = dirty;
   const created = editor.createEditor(app, [], (latest) => {
     text = latest;
@@ -321,7 +356,7 @@ async function ensureEditor(app: HTMLElement): Promise<EditorView> {
   return created;
 }
 
-// ------------------------------------------------------------------ コマンド
+// ------------------------------------------------------------------- commands
 
 function appElement(): HTMLElement {
   const app = document.getElementById("app");
@@ -331,7 +366,7 @@ function appElement(): HTMLElement {
 
 async function openFile(): Promise<void> {
   const path = await pickFileToOpen();
-  if (!path) return; // 取り消しは失敗ではない
+  if (!path) return; // cancelling is not a failure
   const loaded = await readFile(path);
   text = loaded.text;
   currentPath = path;
@@ -342,39 +377,43 @@ async function openFile(): Promise<void> {
   if (view) {
     const editor = await import("./editor");
     editor.replaceDoc(view, loaded.text);
-    // replaceDoc が onChange を同期に呼ぶため、dirty はそのあとで落とす。
+    // replaceDoc calls onChange synchronously, so clear dirty afterwards.
     dirty = false;
     refreshStatus();
   }
-  // **文書を読み込んだら閲覧モードで見せる**（第1節「ほとんどビューアー」）。
-  // 起動時の復元（下）と同じ扱いにする——どの経路で文書が入っても着く先が
-  // 同じでなければ、利用者はモードを意識させられる。
+  // Once a document is loaded, show it in view mode (§1, "mostly a viewer").
+  // Treat this the same as the restore at startup (below) — if the landing place
+  // differs depending on how the document got in, the user is forced to think
+  // about modes.
   await enterView(0);
 }
 
 /**
- * 保存する（第9-3節、第9-6節）。
+ * Save (§9-3, §9-6).
  *
- * **上書き保存は、外部で書き換えられていたら拒否する。**そのまま書くと相手の変更が
- * 消え、消えたことに誰も気づかない。突き合わせは Rust 側が**書く直前に**行う
- * （host.ts の writeFile の `expect`）——こちらで訊いてから書くと、その隙間に
- * 書き換えられたぶんを取りこぼす。
+ * Saving over an existing file is refused if it was modified externally. Writing
+ * anyway erases the other party's changes, and nobody notices that they are
+ * gone. The comparison is done on the Rust side immediately before the write
+ * (the `expect` argument of writeFile in host.ts) — asking here and then writing
+ * would miss whatever was written in the gap.
  *
- * **別名保存（`Mod+Shift+S`）は突き合わせない。**食い違ったときの唯一の出口なので、
- * ここを塞ぐと逃げ場が無くなる。同じ名前を選び直したときに上書きしてよいかは、
- * OS の保存ダイアログが「置き換えますか」と訊いて既に決着している。
+ * Save As (`Mod+Shift+S`) does not compare. It is the only way out when there is
+ * a mismatch, so blocking it here would leave no escape. Whether overwriting is
+ * acceptable when the same name is picked again has already been settled by the
+ * OS save dialog asking "replace?".
  */
 async function saveFile(forcePicker: boolean): Promise<void> {
   const path = forcePicker || !currentPath ? await pickPathToSave(currentPath) : currentPath;
   if (!path) return;
-  // 突き合わせる相手があるのは、いま開いているファイルへの上書きのときだけである。
+  // There is something to compare against only when overwriting the file that is currently open.
   const expect = !forcePicker && path === currentPath ? baseDigest : null;
   const written = await writeFile(path, text, expect);
   if (written.kind === "conflict") {
     externalChanged = true;
-    // **出口を三つとも書く。**拒否だけを伝えて先を示さないと、利用者は
-    // 「保存できない文書」を抱えたまま行き場を失う。どれも既にあるキーで済む
-    // ——ここで新しい綴りを作らない（第4節の第二優先）。
+    // Spell out all three ways out. Reporting only the refusal without showing
+    // what to do next leaves the user stuck holding a document that "cannot be
+    // saved". All three are keys that already exist — do not invent a new
+    // spelling here (§4, second priority).
     notify(
       "外部で書き換えられているため保存しませんでした。\n" +
         "Mod+R … 相手のを取る（自分の編集は失われます）\n" +
@@ -383,34 +422,37 @@ async function saveFile(forcePicker: boolean): Promise<void> {
     );
     return;
   }
-  // 例外が出なかったときだけ dirty を落とす。失敗を成功として扱わない。
+  // Clear dirty only when no exception was thrown. Do not treat a failure as a success.
   currentPath = path;
-  // **書いた内容を新しい基準にする。**そうしないと、次の `Mod+S` が
-  // 自分自身の書き込みを外部からの書き換えと取り違える。
+  // Make what we just wrote the new baseline. Otherwise the next `Mod+S`
+  // mistakes our own write for an external modification.
   baseDigest = written.digest;
   externalChanged = false;
   dirty = false;
   refreshStatus();
 }
 
-// ------------------------------------------------------------ モードの切替
+// ------------------------------------------------------------ switching modes
 
 let scroller: HTMLElement | null = null;
 
 /**
- * リンクの行き先で振る舞いを分ける（第7-4節 (d)、第9-1節）。
+ * Behave differently depending on where a link points (§7-4 (d), §9-1).
  *
- * どの行き先でも、まず遷移そのものは止める。webview がそのまま外部サイトへ
- * 移ると本文もアプリも画面から消え、戻る手段が無いからである。そのうえで、
+ * Whatever the destination, first stop the navigation itself. If the webview
+ * navigates away to an external site, both the document and the app vanish from
+ * the screen with no way back. On top of that,
  *
- * - `#…` は同一文書内の見出しへ送る
- * - それ以外は Rust の `open_external` に渡す。**スキームをここで見ない。**
- *   `http` と `https` だけを通す判断は Rust 側が持っている（第7-4節 (d)）。
- *   同じ判断をこちらにも書くと、**フロントが守っているという誤解**を生む——
- *   webview が乗っ取られれば invoke だけが直接飛ぶので、こちら側の検査は
- *   一つも通らない。**判断の置き場所は一つでなければ、どちらが正かが消える。**
- *   拒まれたぶん（`file:` や別ファイルへの相対リンク。後者は第10節の対象外）は
- *   Rust 側が失敗を返し、それが下の帯に出る
+ * - `#…` scrolls to a heading within the same document
+ * - anything else is handed to Rust's `open_external`. Do not inspect the scheme
+ *   here. The decision to allow only `http` and `https` belongs to the Rust side
+ *   (§7-4 (d)). Writing the same decision here as well creates the illusion that
+ *   the frontend is what is guarding it — if the webview is taken over, the
+ *   invoke goes out directly and not one of the checks on this side runs. Unless
+ *   a decision has exactly one home, it stops being clear which copy is
+ *   authoritative. What is refused (`file:`, and relative links to other files —
+ *   the latter is out of scope for §10) comes back as a failure from the Rust
+ *   side, which surfaces in the banner below
  */
 function onLinkClick(e: MouseEvent): void {
   const link = e.target instanceof Element ? e.target.closest("a") : null;
@@ -420,7 +462,7 @@ function onLinkClick(e: MouseEvent): void {
   if (!href) return;
 
   if (href.startsWith("#")) {
-    // 見出しの id は文書の綴りそのままなので、URL としての符号化を解いてから渡す。
+    // A heading id is the literal spelling from the document, so undo the URL encoding before passing it on.
     const id = decodeURIComponent(href.slice(1));
     if (!scroller) return;
     if (!viewer.scrollToAnchor(scroller, id)) notify(`この文書に見出し「${id}」がありません`);
@@ -434,8 +476,9 @@ function viewerElement(): HTMLElement {
   if (scroller) return scroller;
   const el = document.createElement("div");
   el.className = "gera-view";
-  // 閲覧モードはカーソルを持たない（第4節）ため、そのままでは矢印や PageDown を
-  // 受ける相手が画面に居ない。フォーカスを取れるようにして、送りは webview に任せる。
+  // View mode has no cursor (§4), so as it stands there is nothing on screen to
+  // receive the arrow keys or PageDown. Make it focusable and leave the
+  // scrolling itself to the webview.
   el.tabIndex = 0;
   el.addEventListener("click", onLinkClick);
   document.body.append(el);
@@ -443,67 +486,71 @@ function viewerElement(): HTMLElement {
   return el;
 }
 
-/** 編集モードで画面の先頭に見えている行（0 始まり。閲覧側の data-line と揃える）。 */
+/** The line visible at the top of the screen in edit mode (0-based, matching data-line on the view side). */
 function editorTopLine(v: EditorView): number {
   const rect = v.scrollDOM.getBoundingClientRect();
   const pos = v.posAtCoords({ x: rect.left + rect.width / 2, y: rect.top + 1 }, false);
   return v.state.doc.lineAt(pos).number - 1;
 }
 
-/** 器を一度でも画面に出したか。出していなければスクロール位置はまだ 0 である。 */
+/** Whether the container has ever been put on screen. If not, its scroll position is still 0. */
 let shown = false;
 
 /**
- * 閲覧モードへ入る。`line`（0 始まり）を画面の先頭に見せる。
+ * Enter view mode, showing `line` (0-based) at the top of the screen.
  *
- * **文書を読み込んだ直後もここを通る**（起動時の復元と openFile）。
+ * This is also the path taken right after a document is loaded (the restore at
+ * startup, and openFile).
  */
 function enterView(line: number): void {
   const el = viewerElement();
-  // 寸法を測ってから位置を合わせるので、描く前に画面へ出しておく。
+  // Positioning requires measuring, so put it on screen before drawing.
   el.hidden = false;
   appElement().hidden = true;
   mode = "view";
-  // **一度も画面に出していない器は、スクロール位置がまだ 0 である。**
-  // `scrollTop` への代入は、値を丸めるために同期のレイアウトを走らせるので、
-  // 0 を入れる必要が無いときは触らない。**実測での取り分は小さい**が、
-  // やらない理由も無い水準である。
+  // A container that has never been on screen still has scroll position 0.
+  // Assigning to `scrollTop` runs a synchronous layout in order to clamp the
+  // value, so do not touch it when there is no need to write 0. The measured
+  // gain is small, but there is no reason not to do it either.
   const fresh = !shown;
   shown = true;
   viewer.renderInto(el, text);
   if (line > 0 || !fresh) viewer.scrollToLine(el, line);
-  // 空の文書の一覧は編集モードの器の中に居る。閲覧へ移れば見えなくなるので、
-  // 左上の案内を出し直す（下の enterEdit と対）。
+  // The key list for an empty document lives inside the edit-mode container.
+  // Moving to view mode hides it, so bring the top-left hint back (paired with
+  // enterEdit below).
   refreshEmptyHint();
-  // focus() は既定で対象を画面内へ送ろうとして寸法を測る。上と同じ理由で止める。
+  // focus() by default tries to scroll the target into view, which measures. Stop it for the same reason as above.
   el.focus({ preventScroll: true });
 }
 
 /**
- * 編集モードで `line`（0 始まり）を画面の先頭に置く。
+ * Put `line` (0-based) at the top of the screen in edit mode.
  *
- * 隠している間や字の大きさを変えた直後は寸法が古いので、測り直してから寄せる。
+ * While hidden, and right after a font size change, the measurements are stale,
+ * so re-measure before scrolling.
  */
 function scrollEditorToLine(v: EditorView, line: number): void {
-  // **先頭は「上端」であって「1 行目を 24px 下げた位置」ではない。**
-  // scrollIntoView に 0 行目を渡すと、上の余白（3.5rem）のうち 24px だけを
-  // 残して送るので、器の頭が 32px ぶん隠れる。閲覧側の scrollToLine が
-  // `line <= 0` を `scrollTop = 0` として扱っているのと揃える——**揃えないと、
-  // 上余白に置いたファイル名が編集モードでだけ半分切れる。**
+  // The top is the top edge, not "line 1 pushed down by 24px". Passing line 0 to
+  // scrollIntoView scrolls so that only 24px of the top padding (3.5rem)
+  // remains, hiding 32px of the head of the container. Match what scrollToLine
+  // on the view side does, treating `line <= 0` as `scrollTop = 0` — without
+  // matching, the file name placed in the top padding is half cut off in edit
+  // mode only.
   if (line <= 0) {
     v.scrollDOM.scrollTop = 0;
     return;
   }
   v.requestMeasure();
   const target = v.state.doc.line(Math.min(line + 1, v.state.doc.lines));
-  // cm は ensureEditor が必ず埋める。型の上で null を許しているだけである。
+  // ensureEditor always fills cm in. It is only nullable at the type level.
   if (!cm) return;
   v.dispatch({
     effects: cm.EditorView.scrollIntoView(target.from, { y: "start", yMargin: 24 }),
   });
 }
 
-/** 編集モードへ入る。閲覧モードで先頭に見えていた行を、そのまま先頭に置く（第9-3節）。 */
+/** Enter edit mode, putting the line that was at the top in view mode at the top here too (§9-3). */
 async function enterEdit(): Promise<void> {
   const app = appElement();
   const line = shown && scroller ? viewer.topLine(scroller) : 0;
@@ -517,42 +564,47 @@ async function enterEdit(): Promise<void> {
 }
 
 /**
- * モードの切り替え（第5節）。**両方向で、いま見ていた場所が引き続き見えること**を
- * 満たすため、行番号を挟んで位置を渡す。段落と行は一対一でないので一致はしないが、
- * 同じ見出しの近くには戻る。
+ * Switching modes (§5). To satisfy "in both directions, what you were looking at
+ * stays visible", the position is handed over as a line number. Paragraphs and
+ * lines are not one-to-one so it will not match exactly, but it returns to the
+ * vicinity of the same heading.
  */
 async function toggleMode(): Promise<void> {
   if (mode === "edit") enterView(view ? editorTopLine(view) : 0);
   else await enterEdit();
 }
 
-// ---------------------------------------------------------- 見出しへ飛ぶ
+// ------------------------------------------------------------ jumping to headings
 
 /**
- * いま画面の先頭に見えている行（0 始まり）。**モードによらず同じ意味になる。**
- * 位置を渡し合う手段は行番号ひとつに揃えてある（第9-3節）。
+ * The line currently visible at the top of the screen (0-based). It means the
+ * same thing regardless of mode. Positions are exchanged through a single
+ * mechanism, the line number (§9-3).
  */
 function currentLine(): number {
   if (mode === "view") return shown && scroller ? viewer.topLine(scroller) : 0;
   return view ? editorTopLine(view) : 0;
 }
 
-/** 焦点をいまのモードの本体へ返す。閲覧モードは矢印キーを受けるために焦点が要る。 */
+/** Return focus to the body of the current mode. View mode needs focus in order to receive arrow keys. */
 function focusCurrent(): void {
   if (mode === "view") scroller?.focus({ preventScroll: true });
   else view?.focus();
 }
 
 /**
- * 指定した行を画面の先頭に置き直す。**閲覧モードでも編集モードでも同じ意味になる**
- * ——位置を渡し合う手段は行番号ひとつに揃えてある（第9-3節）。**焦点は動かさない。**
- * 版面が組み直される操作（字の大きさ、利用者 CSS の読み直し）は、いま焦点が
- * どこにあっても——検索の入力欄にあっても——読んでいた場所だけを戻したいからである。
+ * Reposition the given line at the top of the screen. It means the same thing in
+ * both view mode and edit mode — positions are exchanged through a single
+ * mechanism, the line number (§9-3). Focus is not moved. For operations that
+ * re-lay out the text column (font size, reloading user CSS), we want to restore
+ * only the place being read, wherever focus currently is — including inside the
+ * find input.
  */
 function restoreLine(line: number): void {
   if (mode === "view") {
-    // 閲覧モードは `content-visibility: auto` で画面外の高さが推定値なので、
-    // 一度寄せただけでは着かない。寄せ直しは viewer.ts の settle が持つ。
+    // View mode uses `content-visibility: auto`, so off-screen heights are
+    // estimates and a single scroll does not land. Re-scrolling is owned by
+    // settle in viewer.ts.
     if (scroller && shown) viewer.scrollToLine(scroller, line);
   } else if (view) {
     scrollEditorToLine(view, line);
@@ -560,8 +612,9 @@ function restoreLine(line: number): void {
 }
 
 /**
- * 指定した行を画面の先頭に置き、焦点をいまのモードの本体へ返す。
- * **アウトラインや検索から飛ぶとき**のように、道具を閉じて読みに戻る経路で使う。
+ * Put the given line at the top of the screen and return focus to the body of
+ * the current mode. Used on the paths that close a tool and return to reading,
+ * such as jumping from the outline or from find.
  */
 function jumpToLine(line: number): void {
   restoreLine(line);
@@ -569,22 +622,26 @@ function jumpToLine(line: number): void {
 }
 
 /**
- * 見出しの一覧（第9-2節、第14節の実装順序 5）。`Mod+Shift+O` で出し入れする。
+ * The heading list (§9-2, implementation order 5 of §14). Toggled with `Mod+Shift+O`.
  *
- * **編集モードでも動かす。**「探す」は読むときだけの用ではなく、直す場所へ行くのも
- * 同じ動作である。**受け口を window に置いてあるので**（下の keydown）CodeMirror の
- * keymap と取り合いにならず、`Mod+Shift+O` は CodeMirror の既定に無いので
- * 奪うものも無い。**両モードで同じキーが同じ意味を持つほうが、覚えることが少ない**
- * （第4節の第二優先）。飛び先も、行番号を挟めば両モードで同じ扱いにできる。
+ * It works in edit mode too. "Finding" is not something you only do while
+ * reading; navigating to the place you want to fix is the same action. Because
+ * the handler lives on window (see keydown below) it does not fight with
+ * CodeMirror's keymap, and `Mod+Shift+O` is not in CodeMirror's defaults so
+ * there is nothing to take away either. Having the same key mean the same thing
+ * in both modes means less to remember (§4, second priority). The jump target
+ * can be treated identically in both modes too, once it goes through a line
+ * number.
  *
- * 一覧は**本文の正**（このファイルの `text`）から作る。編集モードでは打った直後の
- * 本文がまだ描画に反映されていないので、描画済みの DOM を見に行くと古い一覧が出る。
+ * The list is built from the authoritative document text (`text` in this file).
+ * In edit mode the text just typed is not yet reflected in the rendering, so
+ * looking at the already-rendered DOM would produce a stale list.
  */
 let outline: typeof import("./outline") | null = null;
 
 async function toggleOutline(): Promise<void> {
   const ui = (outline ??= await import("./outline"));
-  // outline.css は動的 import で遅れて入る。利用者 CSS をその後ろへ押し戻す。
+  // outline.css arrives late via the dynamic import. Push the user CSS back behind it.
   raiseUserCss();
   if (ui.isOpen()) {
     ui.close();
@@ -599,39 +656,42 @@ async function toggleOutline(): Promise<void> {
 }
 
 /**
- * 文書内を検索する（第9-2節、第14節の実装順序 6）。`Mod+F` で出す。
+ * Search within the document (§9-2, implementation order 6 of §14). Opened with `Mod+F`.
  *
- * **見出し一覧と対になる道具である。**一覧が「章から探す」もの、検索が
- * 「語から探す」もので、どちらも本人側の痛み（第2節）に効く。
+ * It is the counterpart to the heading list. The list finds by chapter, find
+ * finds by word, and both address the owner's own pain (§2).
  *
- * **見出し一覧と同じく、編集モードでも同じキーが同じ意味を持つ**（第4節の
- * 第二優先）。`Mod+F` は CodeMirror の既定 keymap に無い（`@codemirror/search`
- * を入れていない）ので、window で受けても取り合いにならない。**入れない理由は、
- * 見た目と操作がもう一つ増えるからである**——本文の文字列を探して行番号で飛ぶ
- * という同じ仕組みで、両モードを賄える。
+ * Like the heading list, the same key means the same thing in edit mode too (§4,
+ * second priority). `Mod+F` is not in CodeMirror's default keymap (we do not
+ * include `@codemirror/search`), so receiving it on window causes no conflict.
+ * The reason for not including it is that it would add one more appearance and
+ * one more set of interactions — the same mechanism, searching the text and
+ * jumping by line number, covers both modes.
  *
- * 探す対象は**本文の正**（このファイルの `text`）である。編集モードでは打った
- * 直後の本文がまだ描画に反映されておらず、閲覧モードでは画面外のブロックが
- * まだ組まれていない（viewer.ts の EAGER）。**どちらの事情にも巻き込まれない
- * 側を見る**のは、見出し一覧がトークンから見出しを取るのと同じ判断である。
+ * What is searched is the authoritative document text (`text` in this file). In
+ * edit mode the text just typed is not yet reflected in the rendering, and in
+ * view mode off-screen blocks are not laid out yet (EAGER in viewer.ts). Looking
+ * at the side that is caught up in neither of those situations is the same
+ * decision as the heading list taking headings from the tokens.
  */
 let find: typeof import("./find") | null = null;
 
 /**
- * 当たりへ飛んで見せる。**焦点は検索の入力欄に残したままにする**
- * ——`Enter` を続けて押して次々に送れることが要件だからである
- * （`jumpToLine` は焦点を本体へ返すので、ここでは使わない）。
+ * Jump to a match and show it. Focus stays in the find input — being able to
+ * press `Enter` repeatedly to advance through matches is a requirement
+ * (`jumpToLine` returns focus to the body, so it is not used here).
  */
 function showMatch(query: string, at: FindMatch): void {
   if (mode === "view") {
     if (scroller && shown && find) find.showInView(scroller, query);
   } else if (view && cm) {
-    // **編集モードでは CodeMirror の選択範囲で示す。**エディタは画面外の行を
-    // DOM に持たないので、閲覧モード側の強調（CSS Custom Highlight API）は
-    // そのままでは保たない。選択範囲なら本文にも触れず、既にある仕組みで足りる。
+    // In edit mode, indicate the match with CodeMirror's selection. The editor
+    // does not keep off-screen lines in the DOM, so the view-mode highlight (CSS
+    // Custom Highlight API) does not hold up as-is. A selection does not touch
+    // the document text either, and an existing mechanism is enough.
     view.dispatch({
       selection: { anchor: at.index, head: at.index + query.length },
-      // 当たりは行ではなく点なので、上端に置くより中ほどのほうが前後が見える。
+      // A match is a point, not a line, so placing it in the middle shows more context than the top edge would.
       effects: cm.EditorView.scrollIntoView(at.index, { y: "center" }),
     });
   }
@@ -639,10 +699,11 @@ function showMatch(query: string, at: FindMatch): void {
 
 async function toggleFind(): Promise<void> {
   const ui = (find ??= await import("./find"));
-  // find.css も遅れて入る（toggleOutline と同じ理由）。
+  // find.css also arrives late (same reason as toggleOutline).
   raiseUserCss();
-  // 開いているときの `Mod+F` は、閉じるのではなく**打ち直せる状態に戻す。**
-  // ブラウザと同じ振る舞いなので、覚えることが増えない（第4節の第二優先）。
+  // `Mod+F` while open does not close it; it returns to a state where you can
+  // retype. That is what browsers do, so there is nothing more to remember (§4,
+  // second priority).
   if (ui.isOpen()) {
     ui.refocus();
     return;
@@ -656,29 +717,33 @@ async function toggleFind(): Promise<void> {
   });
 }
 
-// ---------------------------------------------------- キー操作の一覧（F1）
+// ------------------------------------------------------- the key list (F1)
 
 /**
- * キー操作の一覧（`F1`）。**gera は本文以外の常設 UI を持たない**（第9節）ので、
- * メニューもツールバーも無く、**操作を知る手掛かりが画面に一つも無い。**
- * 利用者は本人と友人の二人で（第3節）、**友人は初めて起動したときに何もできない。**
+ * The key list (`F1`). gera has no permanent UI other than the document text
+ * (§9), so there is no menu and no toolbar, and not one clue on screen about how
+ * to operate it. The users are the owner and a friend, two people (§3), and the
+ * friend can do nothing at all on first launch.
  *
- * **`F1` にした理由。**Windows でも Linux でもヘルプの綴りとして通っており、
- * **既に指に入っている綴りなら覚えることが増えない**（第4節の第二優先）。`?` は
- * 編集モードで文字入力とぶつかるので採れない。**修飾キーを伴わないので、
- * gera が既に使っている `Mod+…` のどれとも衝突しない。**
+ * Why `F1`. It is the accepted spelling for help on both Windows and Linux, and
+ * a spelling already in the fingers means nothing new to remember (§4, second
+ * priority). `?` cannot be used because it collides with typing text in edit
+ * mode. It carries no modifier, so it collides with none of the `Mod+…` bindings
+ * gera already uses.
  *
- * **閲覧・編集の両モードで効く。**受け口が window にあるので（下の keydown）、
- * CodeMirror の keymap と取り合いにならない。`F1` は CodeMirror の既定にも無い。
+ * It works in both view and edit mode. The handler is on window (see keydown
+ * below), so it does not fight with CodeMirror's keymap. `F1` is not in
+ * CodeMirror's defaults either.
  *
- * **中身は動的 import で別チャンクに置く**（見出しの一覧・検索と同じ形）。
- * 起動して閲覧するだけの経路では一度も読み込まれない（第4節の第一優先）。
+ * The contents live in a separate chunk via dynamic import (the same shape as
+ * the heading list and find). On a launch that only starts up and reads, it is
+ * never loaded (§4, first priority).
  */
 let keys: typeof import("./keys") | null = null;
 
 async function toggleKeys(): Promise<void> {
   const ui = (keys ??= await import("./keys"));
-  // keys.css も遅れて入る。利用者 CSS をその後ろへ押し戻す（toggleOutline と同じ理由）。
+  // keys.css also arrives late. Push the user CSS back behind it (same reason as toggleOutline).
   raiseUserCss();
   if (ui.isOpen()) {
     ui.close();
@@ -688,72 +753,80 @@ async function toggleKeys(): Promise<void> {
 }
 
 /**
- * 空の文書のときだけ、控えめな一覧を編集モードの器に出す（第9-6節）。
+ * Show an unobtrusive key list in the edit-mode container, but only while the
+ * document is empty (§9-6).
  *
- * **引数なしで起動すると編集モードで真っ白になる。表示するものが無い瞬間なので、
- * ここに一覧を出しても画面を何も奪わない。**そして**友人の初回起動は、おそらく
- * この状態である**（第3節）。**常設 UI ではない**（第9節）——文書が空という
- * 状態があるときだけ出て、何か打てば消える。
+ * Launching with no arguments lands in edit mode on a blank screen. There is
+ * nothing to display at that moment, so putting a list here takes nothing away
+ * from the screen. And the friend's first launch is most likely exactly this
+ * state (§3). It is not permanent UI (§9) — it appears only while the document
+ * is empty, and disappears as soon as anything is typed.
  *
- * **打鍵のたびに呼ばれる**（`refreshStatus`）。**まだ読み込んでいなければ何もしない**
- * ——ここで動的 import を投げると、打っている最中に読み込みが走ることになる。
- * 最初に出すのは起動処理（`showEmptyHint`）だけで、以降はその出し入れである。
+ * This is called on every keystroke (`refreshStatus`). If it has not been loaded
+ * yet, do nothing — firing a dynamic import here would mean loading running
+ * while the user is typing. The only place that shows it for the first time is
+ * the startup code (`showEmptyHint`); after that this only toggles it.
  */
 function refreshEmptyHint(): void {
   if (!keys || !view) return;
   if (text) keys.hideHint();
   else keys.showHint(view.scrollDOM);
-  // **一覧が画面に出ているのは編集モードのときだけである。**置き先が
-  // `.cm-scroller` の中なので、閲覧モードでは器ごと隠れている（`#app` の hidden）。
+  // The list is on screen only in edit mode. It lives inside `.cm-scroller`, so
+  // in view mode the whole container is hidden (the hidden attribute on `#app`).
   refreshTipVisibility(!text && mode === "edit");
 }
 
-/** 起動時に一度だけ。空の文書で編集モードに着いたときに読み込んで出す。 */
+/** Once at startup. Loaded and shown when we land in edit mode with an empty document. */
 async function showEmptyHint(): Promise<void> {
   if (text || !view) return;
   const ui = (keys ??= await import("./keys"));
   raiseUserCss();
-  // **待っている間に打たれていたら出さない。**空でなくなった文書に一覧は要らない。
+  // Do not show it if something was typed while we were waiting. A document that is no longer empty does not need the list.
   if (text || !view) return;
   ui.showHint(view.scrollDOM);
   refreshTipVisibility(mode === "edit");
 }
 
-// -------------------------------------------------------------- 字の大きさ
+// --------------------------------------------------------------- font size
 
 /**
- * 版面の倍率（第9-4節）。
+ * The scale of the text column (§9-4).
  *
- * **触るのは倍率（`--font-scale`）だけで、基準（`--font-size-view` /
- * `--font-size-edit`）には一切触れない。**基準は利用者 CSS が決める場所である
- * （第9-4節「種類 → ユーザー CSS」）。両方を一つの `font-size` に押し込むと、
- * `Mod 0` が**利用者の決めた基準を消す**操作になる。二つに分けてある限り、
- * `Mod 0` は「利用者が決めた大きさ」に戻るのであって、gera の既定には戻らない。
+ * We touch only the scale (`--font-scale`) and never the base
+ * (`--font-size-view` / `--font-size-edit`). The base is where user CSS decides
+ * things (§9-4, "kind → user CSS"). Cramming both into a single `font-size`
+ * would make `Mod 0` an operation that erases the base the user chose. As long
+ * as the two are separate, `Mod 0` returns to "the size the user chose", not to
+ * gera's default.
  *
- * 刻みはブラウザの拡大率（80/90/100/110/125/150…）に合わせた。**利用者が既に
- * 指に入れている段階で、覚えるべき概念が増えない**（第4節の第二優先）。
- * 100% の近傍を 10% 刻みにしてあるのは、これ以上細かいと一段押しても変わった
- * 気がせず何度も押すことになり、これ以上粗いと「ちょっと大きく」が効かない
- * ためである。離れるほど粗くするのは、大きい側では 10% の差が絶対値では
- * 大きいからである。
+ * The steps match browser zoom levels (80/90/100/110/125/150…). Nothing
+ * conceptually new has to be learned at a granularity the user already has in
+ * the fingers (§4, second priority). The neighborhood of 100% is in 10% steps
+ * because anything finer makes a single press feel like nothing changed, leading
+ * to repeated presses, and anything coarser makes "a bit bigger" impossible. It
+ * gets coarser further out because at the large end a 10% difference is large in
+ * absolute terms.
  *
- * 上下を 67%〜200% で切ってあるのは、既定の 17px に対して 11px〜34px にあたる。
- * これより小さいと日本語の漢字が潰れて読めず、これより大きいと 35em の行長
- * （viewer.css）が画面に収まらなくなって、行長を保つという版面の前提が崩れる。
+ * The clamp of 67%–200% corresponds to 11px–34px against the default of 17px.
+ * Smaller than that and Japanese kanji collapse into unreadable blobs; larger
+ * and the 35em line length (viewer.css) no longer fits on screen, which breaks
+ * the premise of the text column, which is to preserve line length.
  */
 const SCALES = [0.67, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
-/** 等倍の位置。`Mod 0` の戻り先であり、読めない設定が入っていたときの既定でもある。 */
+/** The position of 1x. Where `Mod 0` returns to, and also the default when an unreadable setting is found. */
 const UNIT = SCALES.indexOf(1);
 const SCALE_KEY = "gera:font-scale";
 
 /**
- * 記憶した倍率を読む。**文書の内容ではなく利用者ごとの表示設定**なので、
- * 退避（Rust 側）ではなく localStorage に置く。
+ * Read the remembered scale. This is a per-user display setting rather than
+ * document content, so it lives in localStorage and not in the stash (the Rust
+ * side).
  *
- * 読めないこと・壊れていることを普通に起こる事態として扱う。private window では
- * 参照そのものが例外になり、中身は利用者が書き換えられる。**字の大きさごときで
- * 起動を落とさない。**保存してある値そのものではなく最も近い段に寄せるのは、
- * あとで刻みを変えても記憶が無効にならないようにするためである。
+ * Treat being unreadable or corrupt as an ordinary occurrence. In a private
+ * window the reference itself throws, and the contents are something the user
+ * can edit. Do not bring down startup over something as minor as font size. We
+ * snap to the nearest step rather than using the stored value itself so that
+ * changing the steps later does not invalidate what was remembered.
  */
 function loadScaleIndex(): number {
   let saved: number;
@@ -777,11 +850,12 @@ function applyFontScale(): void {
 }
 
 /**
- * 倍率を一段動かす（`step` が 0 なら等倍に戻す）。
+ * Move the scale by one step (`step` of 0 returns to 1x).
  *
- * **変えた瞬間に版面が組み直され、いま読んでいた場所が上下にずれる。**
- * モード切替と同じ手段——行番号を挟んで戻す（第9-3節）——で引き戻す。
- * 常設の指標は置かない（第9節）。代わりに、他に手掛かりが無いので帯に一度だけ出す。
+ * The moment it changes, the text column is re-laid out and the place being read
+ * shifts up or down. Pull it back with the same mechanism as switching modes —
+ * through a line number (§9-3). No permanent indicator is added (§9). Instead,
+ * since there is no other clue, it is shown once in the banner.
  */
 function changeFontScale(step: number): void {
   const next = step === 0 ? UNIT : Math.min(SCALES.length - 1, Math.max(0, scaleIndex + step));
@@ -793,33 +867,33 @@ function changeFontScale(step: number): void {
   try {
     localStorage.setItem(SCALE_KEY, String(SCALES[scaleIndex]));
   } catch {
-    // 記憶できなくても、この起動の間は効いている。利用者の操作は成立しているので黙る。
+    // Even if it cannot be remembered, it is in effect for this launch. The user's action succeeded, so stay silent.
   }
   notify(`文字の大きさ ${Math.round((SCALES[scaleIndex] ?? 1) * 100)}%`);
 }
 
-// -------------------------------------------------------------- 利用者 CSS
+// --------------------------------------------------------------- user CSS
 
 /**
- * 利用者が書いた CSS を差し込む（第9-4節、第14節の実装順序 7）。
+ * Inject the CSS the user wrote (§9-4, implementation order 7 of §14).
  *
- * **設定画面は作らない**（第9-4節。友人は CSS が書ける）。置き場は Rust 側が
- * 決め打ちで持っており、こちらから読み先を指定する手段は無い（host.ts の
- * `readUserCss`）。**ほとんどの起動でファイルは無い**ので、無いことは失敗として
- * 扱わない。
+ * We do not build a settings screen (§9-4; the friend can write CSS). The
+ * location is hard-coded on the Rust side, and there is no way from here to
+ * specify where to read from (`readUserCss` in host.ts). On most launches the
+ * file does not exist, so its absence is not treated as a failure.
  *
- * 差し込み先を `<head>` の末尾にするのは、**同じ強さの規則なら後に書いたほうが
- * 勝つ**からである。gera 自身の CSS（style.css / viewer.css / katex）は静的
- * import で、このコードが動く前にすべて `<head>` へ入っている。したがって
- * `append` するだけで、利用者は `:root { --font-serif: … }` のような素直な
- * 書き方で上書きできる——`!important` を強いるのは、書く側に余計な知識を
- * 求めることになる。
+ * The injection point is the end of `<head>` because among rules of equal
+ * specificity, the one written later wins. gera's own CSS (style.css /
+ * viewer.css / katex) is statically imported and is all in `<head>` before this
+ * code runs. So a plain `append` lets the user override with straightforward
+ * writing such as `:root { --font-serif: … }` — forcing `!important` would
+ * demand extra knowledge from whoever is writing it.
  */
 let userStyle: HTMLStyleElement | null = null;
 
 function applyUserCss(css: string | null): void {
   if (css === null) {
-    // ファイルが消されたあとに読み直したときは、前回のぶんも消える必要がある。
+    // When reloading after the file has been deleted, the previous injection has to go too.
     userStyle?.remove();
     userStyle = null;
     return;
@@ -828,112 +902,126 @@ function applyUserCss(css: string | null): void {
     userStyle = document.createElement("style");
     userStyle.id = "gera-user-css";
   }
-  // **文字列としてだけ扱う。**CSS から JS は動かない（CSP の default-src 'self' が
-  // script を止め、`content: url(…)` のような外部参照は img-src が塞ぐ）ので、
-  // ここで中身を検査しても防げるものが増えない。構文が壊れていれば、その規則が
-  // 落ちるだけである——CSS のパーサは壊れた規則を読み飛ばして先へ進む。
+  // Treat it as nothing but a string. CSS cannot run JS (CSP's default-src
+  // 'self' stops scripts, and external references such as `content: url(…)` are
+  // blocked by img-src), so inspecting the contents here would not prevent
+  // anything. If the syntax is broken, only that rule is dropped — the CSS
+  // parser skips broken rules and moves on.
   userStyle.textContent = css;
   document.head.append(userStyle);
 }
 
 /**
- * 利用者 CSS を `<head>` の末尾へ戻す。
+ * Move the user CSS back to the end of `<head>`.
  *
- * **遅れて読まれる CSS があるからである。**見出しの一覧・検索・編集モードは
- * 動的 import なので、その中の CSS は利用者 CSS より**後**に `<head>` へ入る。
- * そのままだと `.gera-outline-item` のような規則を利用者が上書きできない
- * （同じ強さなら後勝ちである）。読み込んだ直後に押し戻せば、順序は保たれる。
+ * This is needed because some CSS is loaded late. The heading list, find, and
+ * edit mode are dynamic imports, so the CSS inside them enters `<head>` after
+ * the user CSS. Left alone, the user could not override rules such as
+ * `.gera-outline-item` (with equal specificity, later wins). Pushing it back
+ * immediately after loading preserves the order.
  */
 function raiseUserCss(): void {
   if (userStyle) document.head.append(userStyle);
 }
 
 /**
- * 起動時の読み込み。**待たずに投げる。**
+ * The load at startup. Fired without waiting.
  *
- * 起動速度は第一優先である（第4節）。ここで `await` を挟むと、その一往復ぶん
- * 最初の描画が遅れる。**モジュールの評価と同時に投げておき**、`initial_path` や
- * ファイル読み込みと並行させれば、待ち時間は事実上ゼロになる。
+ * Startup speed is the first priority (§4). Inserting an `await` here would
+ * delay the first paint by that one round trip. Firing it at module evaluation
+ * time and letting it run in parallel with `initial_path` and the file read
+ * makes the wait effectively zero.
  *
- * それでも**描く前には効かせる**（起動処理の中で一度だけ `await` する）。
- * 描いたあとに当てると版面を二度組むことになり、そちらのほうが高くつく。
+ * Even so, it takes effect before we draw (there is exactly one `await` for it
+ * inside the startup code). Applying it after drawing would lay out the text
+ * column twice, which costs more.
  */
 const userCssAtStart: Promise<void> = (async () => {
   try {
     applyUserCss((await readUserCss()).css);
   } catch (e: unknown) {
-    // 読めなかったこと（権限など）は黙らない。ただし起動は止めない——
-    // 見た目の設定ごときで文書が読めなくなるほうが損である。
+    // Do not stay silent about being unable to read it (permissions, etc.). But
+    // do not stop startup either — having the document become unreadable over
+    // something as minor as an appearance setting is the worse outcome.
     console.error("[gera] 利用者 CSS を読めなかった", e);
     notify(`利用者 CSS を読めませんでした: ${e instanceof Error ? e.message : String(e)}`);
   }
 })();
 
 /**
- * 利用者 CSS を読み直す（`Mod+,`）。
+ * Reload the user CSS (`Mod+,`).
  *
- * **本人の使い方に必須である**——Claude Code に CSS を書かせて調整する想定なので
- * （第9-4節）、書き換えるたびに gera を起動し直すのでは往復が成立しない。
+ * This is essential to how the owner works — the intent is to have Claude Code
+ * write the CSS and iterate on it (§9-4), and restarting gera after every edit
+ * would make that round trip unworkable.
  *
- * **ファイル監視で自動的に追随はしない。**外部からの書き換えへの追随は第9-6節の
- * 論点で、まだ決まっていない。ここで先取りすると、決めるべきことが暗黙に決まる。
+ * We do not follow changes automatically via file watching. Following external
+ * modifications is the subject of §9-6 and is not settled yet. Jumping ahead
+ * here would implicitly settle something that should be decided.
  *
- * 版面が組み直されると読んでいた場所が上下にずれるので、字の大きさを変えたときと
- * 同じ手段——行番号を挟んで戻す（第9-3節）——で引き戻す。
+ * Re-laying out the text column shifts the place being read up or down, so pull
+ * it back with the same mechanism as a font size change — through a line number
+ * (§9-3).
  */
 async function reloadUserCss(): Promise<void> {
   const { path, css } = await readUserCss();
   const line = currentLine();
   applyUserCss(css);
   restoreLine(line);
-  // **どちらの結果も帯に出す。**画面が変わらなかったとき、それが「反映された結果
-  // 同じ見た目だった」のか「ファイルが無くて何も起きなかった」のかを、
-  // 利用者が区別できる必要がある。置き場そのものを出すのは、設定画面が無い以上
-  // 「どこに置けばよいか」を伝える場所が他に無いからである。
+  // Report both outcomes in the banner. When the screen does not change, the
+  // user needs to be able to distinguish "it was applied and happened to look
+  // the same" from "there was no file and nothing happened". We print the
+  // location itself because, with no settings screen, there is nowhere else to
+  // convey where the file should go.
   notify(css === null ? `利用者 CSS がありません: ${path}` : `利用者 CSS を読み直しました: ${path}`);
 }
 
-// -------------------------------------------------- 外部からの書き換え
+// ------------------------------------------------ external modifications
 
 /**
- * 外部からの書き換えへの追随（第9-6節、第14節の実装順序 9）。
+ * Following external modifications (§9-6, implementation order 9 of §14).
  *
- * **規則は「常に知らせるだけ。読み直すかは人が決める」である。**未保存の変更の
- * 有無で分岐しない。読んでいる最中に本文が黙って入れ替わること自体が損失であり、
- * しかも入れ替わったことに気づけない。**gera は書き手でもある**ので、勝手に
- * 読み直すのは二人の書き手が一つのファイルを取り合う話になる。ブラウザと同じ作法
- * ——知らせて、読み直しは `Mod+R` に委ねる——にすれば、覚えることも増えない。
+ * The rule is "always announce, and let the person decide whether to reload".
+ * There is no branching on whether there are unsaved changes. Having the text
+ * silently swapped out while you are reading is itself a loss, and on top of
+ * that you cannot tell that it was swapped. gera is also a writer, so reloading
+ * on its own turns this into two writers fighting over one file. Following the
+ * same convention as browsers — announce, and leave the reload to `Mod+R` —
+ * means nothing more to remember either.
  *
- * **調べるのはウィンドウがフォーカスを得たときと、保存の直前だけである。**
+ * We check only when the window gains focus, and immediately before a save.
  *
- * - **利用者が Claude Code で書き換えて gera に戻ってくる瞬間**が、まさにそのとき
- *   である。自然で、取りこぼしが少ない
- * - **常時動く仕組みを持たない。**アイドル時に 60fps で描き続けるバグを直した
- *   ばかりであり（第5-10節）、ここでポーリングのループを足すのは筋が悪い
- * - ファイル監視（`notify` クレート等）は依存と常駐スレッドが増える。得られるのは
- *   「フォーカスを持ったまま変更に気づける」だけで、その場面は稀である。しかも
- *   **保存の直前には必ず調べる**ので、実害のある取りこぼし（黙って上書き）は
- *   そちらで捕まる
+ * - The moment the user edits in Claude Code and comes back to gera is exactly
+ *   that moment. It is natural and misses little
+ * - We keep no continuously running machinery. We only just fixed a bug that
+ *   kept painting at 60fps while idle (§5-10), and adding a polling loop here
+ *   would be poor form
+ * - File watching (the `notify` crate, etc.) adds a dependency and a resident
+ *   thread. What it buys is only "noticing a change while holding focus", and
+ *   that situation is rare. Moreover, we always check immediately before a save,
+ *   so the misses that actually do harm (a silent overwrite) are caught there
  *
- * DOM の `focus` を使い、Tauri のウィンドウ事象を購読しない。**権限を増やさずに
- * 済む**（`capabilities/default.json`）うえ、フォーカスを得れば webview の
- * document も焦点を得るので、必要な瞬間はこれで拾える。
+ * We use the DOM `focus` event rather than subscribing to Tauri window events.
+ * That avoids adding a permission (`capabilities/default.json`), and since the
+ * webview's document also gains focus when the window does, this picks up the
+ * moment we need.
  */
 window.addEventListener("focus", () => {
   void checkFileChanged();
 });
 
 async function checkFileChanged(): Promise<void> {
-  // 突き合わせる相手が無い（無題、退避からの復元）ときは何もしない。
-  // 既に知らせてあるときも黙る——読み直すまでフォーカスのたびに出るのは、うるさい。
+  // Do nothing when there is nothing to compare against (untitled, restored from the stash).
+  // Stay silent when it has already been announced — appearing on every focus until a reload is noisy.
   if (!currentPath || !baseDigest || externalChanged) return;
   let latest: string;
   try {
     latest = await fileDigest(currentPath);
   } catch (e: unknown) {
-    // 消された・権限が変わった、は「書き換えられた」とは別のことである。
-    // **帯は出さない**——利用者が起こした操作への応答ではないので、
-    // 画面を触っていないのに文字が出ることになる。保存しようとすれば分かる。
+    // Deleted, or permissions changed, is a different thing from "was modified".
+    // Do not show a banner — this is not a response to a user action, so text
+    // would appear without the user touching anything. They will find out if
+    // they try to save.
     console.error("[gera] 外部の変更を確かめられなかった", e);
     return;
   }
@@ -946,37 +1034,44 @@ async function checkFileChanged(): Promise<void> {
 }
 
 /**
- * `Mod+R` の押し直しを受け付ける期限（第9-6節）。
+ * The window during which a second `Mod+R` is accepted (§9-6).
  *
- * 未保存の変更を黙って捨てないための仕掛けである。**確認のダイアログは作らない**
- * （第9節）ので、代わりに一度目で帯を出して知らせ、二度目で実行する。期限を帯と
- * 同じ 5 秒にしてあるのは、**画面に出ている警告と、受け付けている状態を一致させる
- * ため**である——帯が消えたのに受け付けが残っていると、何も表示されていない画面で
- * 押した `Mod+R` が本文を捨てることになる。
+ * This is the mechanism that keeps unsaved changes from being discarded
+ * silently. We do not build a confirmation dialog (§9), so instead the first
+ * press shows a banner announcing it and the second press carries it out. The
+ * window is 5 seconds, the same as the banner, in order to keep the warning on
+ * screen and the accepting state in agreement — if the banner is gone while the
+ * acceptance remains, a `Mod+R` pressed on a screen showing nothing would
+ * discard the document.
  *
- * **`Mod+S` を二度押しさせる形にしなかったのと同じ理屈は、ここには当てはまらない。**
- * `Ctrl+S` は癖で二度押す人がいるが、`Mod+R` は連打する綴りではない。
+ * The reasoning that led to not making `Mod+S` a double press does not apply
+ * here. Some people press `Ctrl+S` twice out of habit, but `Mod+R` is not a
+ * spelling people hammer.
  */
 let reloadArmedUntil = 0;
 
 /**
- * ファイルを読み直す（`Mod+R`）。**本文全体をファイルの内容で置き換える。**
+ * Reload the file (`Mod+R`). This replaces the entire document text with the file's content.
  *
- * **ブロック単位の差し替えにしない。**理由は三つある。
+ * We do not do block-level replacement. There are three reasons.
  *
- * 1. ブロック単位にすると「**何と何を突き合わせるか**」の選択肢が生まれ、
- *    「前回読んだファイル」と「新しいファイル」を突き合わせる実装が自然に
- *    書けてしまう。**それは併合であって、`Mod+R` の意味が変わる**
- * 2. **gera には差分ビューが無い。**どこが自分の変更でどこが相手の変更かを
- *    見せる手段が無いまま混ぜると、利用者は結果を検算できない
- * 3. 仕掛けを持った時点で「どのブロックが自分のか」という問いが立ち、
- *    **利用者が覚えることが増える**（第4節の第二優先）
+ * 1. Going block by block creates a choice about what gets compared with what,
+ *    and it becomes natural to write an implementation that compares "the file
+ *    as last read" with "the new file". That is merging, and it changes what
+ *    `Mod+R` means
+ * 2. gera has no diff view. Mixing things together with no way to show which
+ *    changes are yours and which are theirs leaves the user unable to check the
+ *    result
+ * 3. The moment such machinery exists, the question "which blocks are mine?"
+ *    arises, and the user has more to remember (§4, second priority)
  *
- * したがって自分の編集は捨てられる。**全体を組み直す代償（実測 0.4 秒とちらつき）は
- * 払う**——明示的に押した操作だからである。
+ * So your own edits are discarded. We pay the cost of re-laying out the whole
+ * document (measured at 0.4 seconds, plus a flicker) — because this is an
+ * operation that was pressed explicitly.
  *
- * **読んでいた場所は行番号で保つ**（第9-3節と同じ手段）。行がずれるほど大きく
- * 書き換えられていれば着地もずれるが、先頭に飛ぶよりはるかにましである。
+ * The place being read is preserved by line number (the same mechanism as §9-3).
+ * If the rewrite is large enough to shift lines the landing shifts too, but that
+ * is far better than jumping to the top.
  */
 async function reloadFile(): Promise<void> {
   if (!currentPath) {
@@ -1004,29 +1099,32 @@ async function reloadFile(): Promise<void> {
   if (view) {
     const editor = await import("./editor");
     editor.replaceDoc(view, loaded.text);
-    // replaceDoc が onChange を同期に呼ぶため、dirty はそのあとで落とす（openFile と同じ）。
+    // replaceDoc calls onChange synchronously, so clear dirty afterwards (same as openFile).
     dirty = false;
     refreshStatus();
   }
-  // **いま居るモードから動かさない。**読み直しは場所を変える操作ではない。
+  // Do not move away from the mode we are in. A reload is not an operation that changes location.
   if (mode === "view") enterView(line);
   else if (view) scrollEditorToLine(view, line);
   notify("ファイルを読み直しました");
 }
 
 /**
- * 入出力とモード切替の受け口を、CodeMirror の keymap ではなく window に置く。
+ * The handler for I/O and mode switching lives on window, not in CodeMirror's keymap.
  *
- * **閲覧モードには CodeMirror が居ない**——それどころか、閲覧モードだけで
- * 終わる起動では読み込まれてすらいない。両方向を一箇所で受けるほかない。
- * `Mod-` は macOS で Cmd、Linux と Windows で Ctrl（第5節）。
+ * View mode has no CodeMirror — more than that, on a launch that ends in view
+ * mode only, it is never even loaded. There is no choice but to receive both
+ * directions in one place. `Mod-` is Cmd on macOS and Ctrl on Linux and Windows
+ * (§5).
  *
- * ここで受けるのは**入出力とモード切替だけ**である。undo や Backspace は
- * CodeMirror 側の既定 keymap に残す（読み専用のはずの画面から本文が変わらないように）。
+ * What is received here is I/O and mode switching only. Undo and Backspace are
+ * left to CodeMirror's default keymap (so that the document text cannot change
+ * from a screen that is supposed to be read-only).
  */
 window.addEventListener("keydown", (e) => {
-  // **キー操作の一覧（`F1`）だけは修飾キーを伴わない**ので、下の門より前で受ける。
-  // 出したまま別の道具を開いたままにしない——見えている覆いは一つで足りる。
+  // The key list (`F1`) is the only binding with no modifier, so it is received
+  // before the gate below. Do not leave it open alongside another tool — one
+  // visible overlay is enough.
   if (e.key === "F1" && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && !e.isComposing) {
     e.preventDefault();
     outline?.close();
@@ -1038,24 +1136,26 @@ window.addEventListener("keydown", (e) => {
   if (!(e.metaKey || e.ctrlKey) || e.altKey || e.isComposing) return;
   const key = e.key.toLowerCase();
 
-  // 見出しの一覧を出したまま別の操作をしたら、その一覧はもう用済みである
-  // （`Mod+Shift+O` 自身だけは、出し入れの切り替えなので通す）。
+  // If another operation happens while the heading list is open, that list has
+  // served its purpose (`Mod+Shift+O` itself is the one exception, since it is
+  // the toggle).
   if (outline?.isOpen() && !(key === "o" && e.shiftKey)) outline.close();
-  // 検索も同じ扱いにする。`Mod+F` 自身だけは通す（開いていれば入力欄へ戻る）。
+  // Find is treated the same way. `Mod+F` itself is the one exception (if open, it returns to the input).
   if (find?.isOpen() && key !== "f") find.close();
-  // 一覧を出したまま別の操作をしたら、その一覧はもう用済みである（`F1` は上で受けた）。
+  // If another operation happens while the key list is open, that list has served its purpose (`F1` was handled above).
   if (keys?.isOpen()) keys.close();
 
-  // 見出しへ飛ぶ（第9-2節）。VS Code の「ファイル内のシンボルへ移動」と同じ綴りに
-  // 揃えてある——**既に指に入っている操作なら、覚えることが増えない**（第4節）。
+  // Jump to a heading (§9-2). The spelling matches VS Code's "Go to Symbol in
+  // File" — an operation already in the fingers means nothing new to remember (§4).
   if (key === "o" && e.shiftKey) {
     e.preventDefault();
     run("見出しの一覧", toggleOutline);
     return;
   }
 
-  // 文書内を検索する（第9-2節）。**preventDefault が要る**——webview に渡すと
-  // ブラウザ既定の検索に奪われ、そちらは段階的描画のせいで画面外を見つけられない。
+  // Search within the document (§9-2). preventDefault is required — passing it
+  // to the webview lets the browser's built-in find take it, and that one cannot
+  // find anything off screen because of the incremental rendering.
   if (key === "f") {
     e.preventDefault();
     run("文書内検索", toggleFind);
@@ -1067,21 +1167,24 @@ window.addEventListener("keydown", (e) => {
     run("モードの切り替え", toggleMode);
     return;
   }
-  // ファイルを読み直す（第9-6節）。**ブラウザと同じ綴りなので、覚えることが
-  // 増えない**（第4節の第二優先）。webview 既定の再読み込みは release ビルドでは
-  // 効かないが、dev では効いてアプリごと作り直されるので preventDefault する。
+  // Reload the file (§9-6). The spelling is the same as a browser's, so there is
+  // nothing new to remember (§4, second priority). The webview's built-in reload
+  // does not work in release builds, but it does in dev, where it rebuilds the
+  // whole app, so we preventDefault.
   if (key === "r") {
     e.preventDefault();
     run("ファイルの読み直し", reloadFile);
     return;
   }
-  // 利用者 CSS を読み直す（第9-4節）。**`Mod+,` は多くの editor（VS Code、Zed）で
-  // 「設定」を開く綴りであり、gera にとっての設定は user.css ただ一つである**
-  // ——既に指に入っている操作なら、覚えることが増えない（第4節の第二優先）。
-  // `Mod+R` は文書そのものの読み直しに取ってある（第9-6節）。`Mod+Shift+R` は
-  // ブラウザの「強制再読み込み」と紛らわしい。`Mod+Shift+U` は ibus と GTK が
-  // Unicode 入力に使うため、編集モードだけ奪われて振る舞いが揃わない。
-  // 綴りが一つに定まらないので、字の大きさと同じく e.key と e.code の両方から拾う。
+  // Reload the user CSS (§9-4). `Mod+,` is the spelling that opens Settings in
+  // many editors (VS Code, Zed), and gera's settings are user.css and nothing
+  // else — an operation already in the fingers means nothing new to remember
+  // (§4, second priority). `Mod+R` is reserved for reloading the document itself
+  // (§9-6). `Mod+Shift+R` is easily confused with a browser's "hard reload".
+  // `Mod+Shift+U` is used by ibus and GTK for Unicode input, so it would be
+  // taken in edit mode only and the behavior would not match across modes.
+  // The spelling is not uniquely determined, so, as with font size, we pick it
+  // up from both e.key and e.code.
   if (key === "," || e.code === "Comma") {
     e.preventDefault();
     run("利用者 CSS の読み直し", reloadUserCss);
@@ -1098,11 +1201,12 @@ window.addEventListener("keydown", (e) => {
     run(shift ? "名前を付けて保存" : "保存", () => saveFile(shift));
     return;
   }
-  // 字の大きさ（第9-4節）。**綴りが一つに定まらないので、両方から受ける。**
-  // `+` は多くの配列で Shift を伴い、そのとき e.key は配列によって `+` にも `;` にも
-  // なる。テンキーは Shift 無しで `+` を出すが e.code が別である。**e.key で意味を、
-  // e.code で位置を拾い、どちらかが当たれば通す。**`=` を受けるのは、Shift 無しでも
-  // 拡大できるほうが押しやすいためで、ブラウザも同じ扱いをしている。
+  // Font size (§9-4). The spelling is not uniquely determined, so we accept
+  // both. `+` requires Shift on many layouts, and then e.key is `+` on some
+  // layouts and `;` on others. The numpad produces `+` without Shift, but its
+  // e.code differs. We take meaning from e.key and position from e.code, and
+  // accept it if either matches. We accept `=` because being able to zoom in
+  // without Shift is easier to press, and browsers do the same.
   if (key === "+" || key === "=" || e.code === "NumpadAdd" || e.code === "Equal") {
     e.preventDefault();
     changeFontScale(1);
@@ -1118,8 +1222,9 @@ window.addEventListener("keydown", (e) => {
     changeFontScale(0);
     return;
   }
-  // AI との対話に貼り直すための一括コピー（第11節）。Shift 無しの Mod-c は
-  // 選択範囲のコピーなので、webview に渡したまま触らない。
+  // Copy the whole text at once, for pasting back into a conversation with an AI
+  // (§11). Mod-c without Shift is copying the selection, so it is left alone and
+  // passed to the webview.
   if (key === "c" && e.shiftKey) {
     e.preventDefault();
     run("クリップボードへの出力", async () => {
@@ -1129,19 +1234,22 @@ window.addEventListener("keydown", (e) => {
   }
 });
 
-// -------------------------------------------------------------------- 起動
+// ------------------------------------------------------------------- startup
 
 /**
- * 第5節の要（書体でモードを示す）が成立しているかを測って log に出す。
+ * Measure whether the linchpin of §5 (indicating the mode by typeface) holds,
+ * and log the result.
  *
- * **これは開発者向けの診断であって、利用者の目に入るものは何も作らない。**
- * にもかかわらず、起動時にそのまま呼ぶと**実測で 68 ms を最初の描画の前に払う**
- * （2,204 数式の文書、release ビルド、n=3 で 68/68/69 ms）。中身は 72px の
- * canvas で明朝とゴシックを 8 回測るもので、**その場で両方の書体を読ませて
- * 字形を組ませる**ため、この値になる。
+ * This is a diagnostic for developers and creates nothing the user ever sees.
+ * Even so, calling it directly at startup costs a measured 68 ms before the
+ * first paint (a document with 2,204 formulas, release build, n=3 at 68/68/69
+ * ms). What it does is measure mincho and gothic eight times on a 72px canvas,
+ * which forces both typefaces to be loaded and their glyphs shaped on the spot —
+ * hence that number.
  *
- * **描き終えてから測る。**診断の結果は console にしか出ないので、遅れて出ても
- * 何も損なわれない。requestIdleCallback が無い実装のために setTimeout に落とす。
+ * Measure after drawing is finished. The diagnostic's result goes only to the
+ * console, so nothing is lost by it arriving late. We fall back to setTimeout
+ * for implementations without requestIdleCallback.
  */
 function reportFontsWhenIdle(): void {
   const idle = (window as { requestIdleCallback?: (cb: () => void) => void })
@@ -1152,27 +1260,28 @@ function reportFontsWhenIdle(): void {
 reportFontsWhenIdle();
 
 refreshStatus();
-// 記憶した倍率は、最初に描く前に効かせる。あとから当てると版面を二度組むことになる。
+// The remembered scale takes effect before the first paint. Applying it later would lay out the text column twice.
 applyFontScale();
 
 /**
- * 着く先を決める。**コマンドライン引数が先で、退避はその次である**（第9-5節）。
+ * Decide where we land. The command-line argument comes first, the stash second (§9-5).
  *
- * 引数で指されたファイルは「いま開けと言われたもの」であり、退避は「前回の続き」
- * である。両方あるときに前回を優先する読み方は無い。
+ * The file named by the argument is "the one we were told to open now", while
+ * the stash is "where we left off last time". When both exist, there is no
+ * reading under which the previous session wins.
  *
- * **中身のある文書なら閲覧モードで見せる。**gera はほとんどビューアーである
- * （第1節）。**この経路では CodeMirror を一度も読まない。**
+ * A document with content is shown in view mode. gera is mostly a viewer (§1).
+ * This path never loads CodeMirror at all.
  *
- * **空のときは編集モードで始める。**空の閲覧モードには表示するものが無く、
- * カーソルも持たない（第9-1節）ので、画面には何も無く、打つこともできない
- * 状態になる。空の文書に対して利用者ができることは「書き始める」か「開く」
- * だけであり、前者は編集モードでしか行えない。
+ * When empty, we start in edit mode. An empty view mode has nothing to display
+ * and no cursor (§9-1), so the screen would be blank with no way to type. All
+ * the user can do with an empty document is start writing or open something, and
+ * the former is only possible in edit mode.
  */
 run("起動", async () => {
   const startup = await initialPath();
-  // **描く前に効かせる。**投げたのはモジュールの評価時なので、ここに着く頃には
-  // 大抵もう済んでいる（上の userCssAtStart）。
+  // Make it take effect before we draw. It was fired at module evaluation time,
+  // so by the time we get here it is usually already done (userCssAtStart above).
   await userCssAtStart;
   if (startup.path) {
     try {
@@ -1184,29 +1293,31 @@ run("起動", async () => {
       enterView(0);
       return;
     } catch (e) {
-      // Rust 側は読めることを確かめてから渡してくるが、その後に消される経路は
-      // 残っている。ここで投げ直すと**どのモードにも入らないまま終わり、画面が
-      // 白いまま**になる。理由を出して、引数が無かったときと同じ道に落とす。
+      // The Rust side confirms the file is readable before handing it over, but
+      // the path where it is deleted afterwards remains. Rethrowing here would
+      // end without entering any mode, leaving the screen blank. Report the
+      // reason and fall through to the same path as when there was no argument.
       notify(`${startup.path} を開けませんでした: ${e instanceof Error ? e.message : String(e)}`);
     }
   } else if (startup.error) {
     notify(`指定されたファイルを開けませんでした: ${startup.error}`);
   }
 
-  // **引数が開けなかったことは、退避を捨てる理由にならない。**退避はまだファイルに
-  // 書いていない本文であり、ここで空の文書を出すと、それが次の退避で上書きされて
-  // 消える。**失うものがある側に倒さない**（第9-6節と同じ規則）。
+  // Failing to open the argument is not a reason to discard the stash. The stash
+  // is text that has not been written to a file yet, and putting up an empty
+  // document here would let the next stash overwrite and destroy it. Do not err
+  // toward the side that has something to lose (the same rule as §9-6).
   const session = await loadSession();
   if (session?.text) {
     currentPath = session.path;
     text = session.text;
-    // 退避は「まだファイルに書いていない状態」の記録なので、dirty は落とさない。
+    // The stash records a state that has not been written to a file, so dirty is not cleared.
     dirty = true;
     refreshStatus();
     enterView(0);
     return;
   }
   await enterEdit();
-  // **空の文書で始まった。**画面には何も無いので、ここに一覧を出しても何も奪わない。
+  // We started with an empty document. There is nothing on screen, so putting the list here takes nothing away.
   await showEmptyHint();
 });

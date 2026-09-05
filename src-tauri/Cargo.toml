@@ -5,25 +5,26 @@ description = "gera — Markdown editor for proofreading AI output"
 edition = "2021"
 rust-version = "1.77.2"
 
-# edition 2024 にしない。2024 では `std::env::set_var` が unsafe fn になり、
-# 起動時の IME 設定（lib.rs の setup_ime_env）を unsafe ブロックで囲む必要が出る。
-# GTK 初期化前・単一スレッドでの設定は実際には安全なので、
-# unsafe を書かずに済む 2021 に留める。
+# Do not move to edition 2024. There `std::env::set_var` becomes an unsafe fn,
+# which would force the IME setup at startup (setup_ime_env in lib.rs) into an
+# unsafe block. Setting it before GTK initialisation, on a single thread, is
+# actually safe, so we stay on 2021 and avoid writing unsafe at all.
 
 [lib]
-# Windows で実行ファイル名 `gera` とライブラリ名が衝突するのを避けるため、
-# Tauri 2 の慣例に従って lib 側だけ別名にする。
+# To avoid a clash between the executable name `gera` and the library name on
+# Windows, only the lib gets a different name, following the Tauri 2 convention.
 name = "gera_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [features]
-# **素の `cargo build --release` はリリース版にならない。**この feature が
-# 立っていないと tauri は dev 扱いになり、frontendDist を埋め込まず
-# devUrl（localhost:5173）を見に行く——実測で、素のビルドの成果物は
-# 「Could not connect to localhost」の画面しか出さなかった。
-# `tauri build` は自分で有効化するので影響を受けないが、
-# cargo を直接叩く経路（測定など）はこの宣言が無いと立てようがない。
-# Tauri のテンプレートには最初から入っている。
+# A bare `cargo build --release` does NOT produce a release build. Without this
+# feature enabled, tauri treats the build as dev: it does not embed frontendDist
+# and instead goes looking at devUrl (localhost:5173) — measured, the artifact of
+# a bare build showed nothing but a "Could not connect to localhost" screen.
+# `tauri build` enables the feature itself and so is unaffected, but any route
+# that drives cargo directly (measurement runs, for instance) has no way to stand
+# the app up without this declaration.
+# It ships in the Tauri template from the start.
 custom-protocol = ["tauri/custom-protocol"]
 
 [build-dependencies]
@@ -33,19 +34,19 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-clipboard-manager = "2"
-# http/https のリンクを OS の既定ブラウザへ渡すため（第7-4節 (d)、第9-1節）。
-# 呼ぶのは Rust 側だけである——スキームの検証をフロントに置くと、
-# webview が乗っ取られた時点で素通りになる。
+# For handing http/https links to the OS default browser (see DESIGN.md §7-4 (d),
+# §9-1). Only the Rust side calls it — putting the scheme check in the front end
+# means it is bypassed entirely the moment the webview is compromised.
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri-plugin-window-state = "2"
 
-# 起動速度が第一優先（設計 第 4 節）で、コールド起動の差の大半は
-# バイナリの読み込み量に由来する（第 5-1 節）。したがって release は
-# サイズを削る方向で組む。Rust 側は起動時のファイル読みと IPC の
-# 取り回しだけで、重い計算は WebKitGTK の中にあるため、
-# opt-level を落としても動作速度には効かない。
+# Startup speed is the top priority (see DESIGN.md §4), and most of the
+# difference in cold start comes from how much binary has to be loaded (§5-1).
+# So the release profile is built to cut size. The Rust side only reads files at
+# startup and shuttles IPC around; the heavy computation lives inside WebKitGTK,
+# so lowering opt-level does not affect running speed.
 [profile.release]
 opt-level = "s"
 lto = "fat"

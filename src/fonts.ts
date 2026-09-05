@@ -1,9 +1,11 @@
 /**
- * 第5節の要——書体でモードを示す判断——が実際に成立しているかを起動時に測る。
+ * Measures at launch whether the crux of §5 — the decision to indicate the mode by
+ * typeface — actually holds.
  *
- * 単一のファミリー名だけを書くと、未導入の環境で黙って fallback し、
- * 両モードが同じ書体で組まれて、状態表示が無言で失われる。
- * それを検知できないまま配布しないために、解決結果を log に出す。
+ * If only a single family name were written, an environment without it installed
+ * would silently fall back, both modes would be set in the same typeface, and the
+ * state indication would be lost without a word. So that this is never shipped
+ * undetected, the resolution result is written to the log.
  */
 
 const PROBE = "あいうえお永国漢字ABC";
@@ -13,11 +15,12 @@ function measure(ctx: CanvasRenderingContext2D, family: string): number {
   return ctx.measureText(PROBE).width;
 }
 
-/** 指定したファミリーが実際に解決されるか（fallback されていないか）。 */
+/** Whether the given family actually resolves (that is, has not fallen back). */
 export function fontAvailable(family: string): boolean {
   const ctx = document.createElement("canvas").getContext("2d");
   if (!ctx) return false;
-  // 二つの異なる総称フォントを土台にして、どちらに対しても幅が動けば解決している。
+  // Use two different generic fonts as the baseline: if the width moves against both
+  // of them, the family has resolved.
   return (["monospace", "sans-serif"] as const).every((generic) => {
     const base = measure(ctx, generic);
     const test = measure(ctx, `"${family}", ${generic}`);
@@ -33,14 +36,15 @@ function familiesOf(cssVar: string): string[] {
     .filter((f) => f && !["serif", "sans-serif", "monospace"].includes(f));
 }
 
-/** スタックのうち最初に解決したファミリー。どれも無ければ null。 */
+/** The first family in the stack that resolves. `null` if none of them do. */
 export function resolvedFamily(cssVar: string): string | null {
   return familiesOf(cssVar).find(fontAvailable) ?? null;
 }
 
 /**
- * 明朝とゴシックが両方解決し、かつ互いに別物であることを確かめる。
- * 同じ書体に落ちていれば、モード表示としては機能していない。
+ * Confirms that the serif (mincho) and sans-serif (gothic) faces both resolve, and
+ * that they are different from one another. If they have landed on the same
+ * typeface, the mode indication is not working.
  */
 export function reportFontResolution(): void {
   const serif = resolvedFamily("--font-serif");

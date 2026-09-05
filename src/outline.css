@@ -1,34 +1,40 @@
-/* 見出しへ飛ぶ道具の見た目（設計 第9-2節）。
-   outline.ts からのみ import される。**呼ばれるまで読み込まれない**ので、
-   起動時の費用にならない（第4節の第一優先）。
+/* Appearance of the jump-to-heading tool (see DESIGN.md §9-2).
+   Imported only from outline.ts. It is not loaded until summoned, so it costs
+   nothing at startup (first priority in §4).
 
-   **ここに現れるクラス名は公開 API である**（第9-4節）。利用者が自分の CSS で
-   見た目を変えられることが要件なので、名前を変えるときは docs/CSS.md も直すこと。
+   The class names appearing here are public API (§9-4). It is a requirement that
+   users can change the appearance with their own CSS, so when renaming one, fix
+   docs/CSS.md as well.
 
-   **寸法はすべて rem で書く。**`--font-scale`（`Mod +/-`）が動かすのは
-   **版面**——読んでいる本文の大きさ——であって、道具の大きさではない。本文を
-   大きくしたときに一覧まで太ると、一画面に入る見出しが減って**探しにくくなる**。
-   目的が逆を向くので、ここは倍率から切り離す（`.gera-doc` の外に置いてあるので
-   既定でそうなるが、意図として書き残す）。
+   All dimensions are written in rem. What `--font-scale` (`Mod +/-`) moves is the
+   text block — the size of the body text you are reading — not the size of the
+   tools. If the list grew fat when you enlarged the body text, fewer headings would
+   fit on one screen and finding things would get harder. The purposes point in
+   opposite directions, so this is decoupled from the scale factor (it is placed
+   outside `.gera-doc` so that happens by default, but the intent is written down
+   here).
 
-   **色は style.css の変数だけで作る。**ダークモードは変数の側で切り替わるので、
-   ここに `prefers-color-scheme` を書く必要がない。半透明が要る二箇所
-   （覆いと影）も、生の黒ではなく変数から混ぜて作る——地色が紙色か墨色かで
-   正しい側に転ぶ。 */
+   Colours are built only from the variables in style.css. Dark mode switches on the
+   variable side, so there is no need to write `prefers-color-scheme` here. The two
+   places that need translucency (the backdrop and the shadow) are also mixed from
+   variables rather than raw black — so they fall on the right side whether the
+   ground is paper-coloured or ink-coloured. */
 
 .gera-outline {
   position: fixed;
   inset: 0;
   z-index: 10;
-  /* 本文を薄く伏せる。**隠すためではなく、一覧が本文の一部でないことを示すため**で、
-     下の文字が読める濃さに留める。 */
+  /* Lay the text down faintly. Not to hide it, but to show that the list is not part
+     of the text; kept light enough that the characters underneath are still readable. */
   background: color-mix(in srgb, var(--bg) 72%, transparent);
   display: flex;
   justify-content: center;
-  /* **一覧は中身の高さで留める。**既定の stretch だと、絞り込んで一件になっても
-     箱だけが画面の高さのまま残り、空白を見せることになる。 */
+  /* The list is bounded by the height of its contents. With the default stretch, the
+     box alone would stay the full height of the screen even when filtering leaves a
+     single entry, showing nothing but blank space. */
   align-items: flex-start;
-  /* 画面の中央ではなく上寄せ。一覧は下へ伸びるので、上端が動かないほうが目が迷わない。 */
+  /* Aligned to the top rather than centred on the screen. The list grows downward, so
+     the eye wanders less when the top edge does not move. */
   padding: 8vh 1.5rem 1.5rem;
   box-sizing: border-box;
 }
@@ -42,13 +48,14 @@
   background: var(--bg);
   border: 1px solid var(--rule);
   border-radius: 8px;
-  /* 覆いが半透明なので、枠だけでは本文と地続きに見える。影で一枚持ち上げる。 */
+  /* Because the backdrop is translucent, a border alone makes it look continuous with
+     the text. The shadow lifts it one layer. */
   box-shadow: 0 0.5rem 2rem color-mix(in srgb, var(--fg) 20%, transparent);
   overflow: hidden;
 }
 
 .gera-outline-input {
-  /* 道具の文字はゴシック。明朝で組まれるのは本文だけで、それがモード表示でもある（第5節）。 */
+  /* Tool text is sans-serif. Only the document body is set in serif, and that is itself the mode indicator (§5). */
   font: 1rem/1.6 var(--font-sans);
   color: var(--fg);
   background: none;
@@ -71,17 +78,21 @@
   padding: 0.35rem 1rem;
   color: var(--fg);
   cursor: default;
-  /* 見出しが長くても一行に収める。折り返すと一画面に入る本数が読めなくなる。 */
+  /* Keep a heading on one line however long it is. Wrapping makes it impossible to
+     read off how many fit on one screen. */
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  /* 選択の帯を左端の印と揃えるための場所取り。選んでいない間は透明にしておく。 */
+  /* Reserving space so the selection band lines up with the mark at the left edge.
+     Kept transparent while not selected. */
   border-left: 2px solid transparent;
 }
 
-/* 階層は**字下げと濃さ**で示す。文書は `#` から始まるとは限らない（`##` で
-   始まる文書が普通にある）ので、深さは**その文書の中で最も浅い見出しからの差**で
-   数える。絶対の見出し番号で字下げすると、全部が一段下がって字下げの意味が消える。 */
+/* Level is shown by indentation and weight of colour. A document does not necessarily
+   start at `#` (documents starting at `##` are perfectly common), so depth is counted
+   as the difference from the shallowest heading within that document. Indenting by the
+   absolute heading number would push everything down one step and rob the indentation
+   of its meaning. */
 .gera-outline-item[data-depth="0"] { padding-left: 1rem; font-weight: 600; }
 .gera-outline-item[data-depth="1"] { padding-left: 2.1rem; }
 .gera-outline-item[data-depth="2"] { padding-left: 3.2rem; color: var(--dim); }
@@ -92,12 +103,13 @@
 .gera-outline-selected {
   background: var(--sel);
   border-left-color: var(--accent);
-  /* 深い見出しは薄く出しているが、選んでいる一行だけは読める濃さに戻す。 */
+  /* Deep headings are shown faintly, but the one selected row is returned to a
+     readable weight. */
   color: var(--fg);
 }
 
-/* 打った文字が見出しのどこに当たったか。**当たった場所が見えないと、
-   なぜその行が残っているのかが分からない。** */
+/* Where in the heading what you typed matched. If you cannot see where the match is,
+   you cannot tell why that row survived. */
 .gera-outline-mark { color: var(--accent); font-weight: 700; }
 
 .gera-outline-empty {

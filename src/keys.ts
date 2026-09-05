@@ -1,45 +1,51 @@
 /**
- * キー操作の一覧（`F1`）。
+ * The key list (`F1`).
  *
- * **gera は本文以外の常設 UI を持たない**（設計 第9節）。メニューもツールバーも
- * 無いので、**操作を知る手掛かりが画面に一つも無い。**利用者は本人と友人の
- * 二人で（第3節）、**友人は初めて起動したときに何もできない。**ここで埋めるのは
- * その穴だけである。
+ * gera has no permanent UI other than the text itself (see DESIGN.md §9). There is
+ * no menu and no toolbar, so there is not a single clue on screen for how to
+ * operate it. The users are the owner and one friend (§3), and the friend can do
+ * nothing at all on first launch. This module fills that one hole and nothing more.
  *
- * **`F1` を選んだ理由。**Windows でも Linux でも「ヘルプ」の綴りとして通っており、
- * **既に指に入っている綴りなら、覚えることが増えない**（第4節の第二優先）。
- * `?` は編集モードで文字入力とぶつかるので採れない。修飾キーを伴わないので、
- * gera が既に使っている `Mod+…` のどれとも衝突しない。
+ * Why `F1`. On both Windows and Linux it reads as the spelling of "help", and a
+ * spelling already in the fingers adds nothing to remember (the second priority in
+ * §4). `?` cannot be used: it collides with typing text in edit mode. `F1` carries
+ * no modifier key, so it clashes with none of the `Mod+…` bindings gera already uses.
  *
- * **これは常設 UI ではない**（第9節）。出るのは三つの形で、いずれも画面に居座らない。
+ * This is not a permanent UI (§9). It appears in three forms, none of which settles
+ * onto the screen.
  *
- * 1. **`F1` の覆い**（`open` / `close`）——呼んだときだけ出て、`Esc` か `F1` で消える。
- *    見出しの一覧（outline.ts）と同じ作法である
- * 2. **空の文書のときの控えめな一覧**（`showHint` / `hideHint`）——**表示するものが
- *    無い瞬間にだけ出る。**何か打てば消える。**状態が無ければ画面に何も足さない**
- * 3. **ファイル名の隣の案内**（`.gera-keys-tip`。style.css と main.ts）——**画面の
- *    左上に常に出る。**2026-09-04 に本人の指示で常設にした（第9節を緩める判断。
- *    経緯は main.ts の `refreshFileLabel`）。**唯一の常設 UI がこれである**ので、
- *    2 が出ている間は畳んで、同じことを二度言わないようにしてある（main.ts）
+ * 1. The `F1` overlay (`open` / `close`) — appears only when called, dismissed with
+ *    `Esc` or `F1`. Same manner as the outline list (outline.ts)
+ * 2. The quiet list on an empty document (`showHint` / `hideHint`) — appears only at
+ *    the moment when there is nothing to display. Typing anything dismisses it. With
+ *    no state, nothing is added to the screen
+ * 3. The tip next to the file name (`.gera-keys-tip`; style.css and main.ts) —
+ *    always present at the top left of the screen. Made permanent on 2026-09-04 at
+ *    the owner's instruction (a decision that relaxes §9; the background is in
+ *    `refreshFileLabel` in main.ts). It is the only permanent UI, so while 2 is
+ *    showing it folds away, to avoid saying the same thing twice (main.ts)
  *
- * **2 を 1 の使い回しにしなかった理由。**覆いは本文の上に重ねて閉じさせる形で、
- * **閉じるまで打てない。**空の文書で利用者ができることは「書き始める」ことなので、
- * **打鍵の邪魔をする形は目的と逆を向く。**中身（下の `GROUPS`）は一つに保ち、
- * **見せ方だけを二つ持つ**——一覧の内容が二箇所に分かれると、片方だけ古くなる。
+ * Why 2 is not a reuse of 1. The overlay layers over the text and demands to be
+ * closed: you cannot type until it is gone. What a user can do with an empty
+ * document is start writing, so a form that gets in the way of keystrokes points
+ * away from the purpose. The content (`GROUPS` below) is kept as one, and only the
+ * presentation is kept as two — if the list's content were split across two places,
+ * one of them would go stale.
  *
- * このモジュールは main.ts から**動的に import される。**起動して閲覧するだけの
- * 経路——それが普通の使い方である（第1節）——では一度も読み込まれない。CSS を
- * ここで import しているのも同じ理由である（outline.ts と同じ形）。
+ * This module is dynamically imported from main.ts. The path of launching and just
+ * reading — which is the ordinary way to use it (§1) — never loads it once. The CSS
+ * is imported here for the same reason (the same shape as outline.ts).
  */
 import "./keys.css";
 
 /**
- * 修飾キーの綴り。**`Mod` と書いても押せない**ので、その環境で実際に押すものを出す。
- * macOS は `Cmd`、Windows と Linux は `Ctrl`（main.ts の受け口が
- * `metaKey || ctrlKey` で両方を受けているのと対応する）。
+ * How the modifier key is spelled. Writing `Mod` gives nothing to press, so show
+ * what is actually pressed in this environment: `Cmd` on macOS, `Ctrl` on Windows
+ * and Linux (matching the handler in main.ts, which accepts both via
+ * `metaKey || ctrlKey`).
  *
- * webview の中なので OS は `userAgent` からしか分からない。**外すと綴りが一つ
- * ずれるだけ**で、操作そのものは両方の修飾キーで通る。
+ * Inside a webview the OS can only be guessed from `userAgent`. Guessing wrong only
+ * shifts one spelling; the operation itself goes through with either modifier.
  */
 const MOD = /Mac|iPhone|iPad/.test(navigator.userAgent) ? "Cmd" : "Ctrl";
 
@@ -49,18 +55,20 @@ interface Row {
 }
 
 interface Group {
-  /** 見出し。`null` は主たる一覧（見出しを付けない）。 */
+  /** The heading. `null` means the main list (which carries no heading). */
   title: string | null;
   rows: Row[];
 }
 
 /**
- * 載せるもの。**一覧であって説明ではない**ので、一行に収まらない話は書かない
- * （保存の衝突や未保存の扱いは、その場で帯が案内する。main.ts）。
+ * What goes on the list. This is a list, not documentation, so anything that does
+ * not fit on one line is left out (save conflicts and the handling of unsaved work
+ * are announced by the banner at the moment they happen; main.ts).
  *
- * 綴りは main.ts の受け口をそのまま写したものである。**主たる一覧のあとに、
- * 道具の中と編集モードを分けてある**——前者は覚えなくても困らないが、
- * 知っていれば速い類のものなので、混ぜると主たる一覧が読みにくくなる。
+ * The spellings are copied straight from the handler in main.ts. After the main
+ * list, the ones inside the tools and the ones in edit mode are split off — those
+ * are the kind you do not suffer for not knowing but are faster for knowing, so
+ * mixing them in would make the main list harder to read.
  */
 const GROUPS: Group[] = [
   {
@@ -98,11 +106,13 @@ const GROUPS: Group[] = [
 ];
 
 /**
- * 一覧そのものを組む。覆いと控えめな一覧で**同じものを使う**（このファイル冒頭）。
+ * Builds the list itself. The overlay and the quiet list use the very same one (see
+ * the head of this file).
  *
- * **群が変わっても格子は一つに保つ。**群ごとに分けると**キーの列の幅が群ごとに
- * 変わり、綴りが縦に揃わない。**揃っていないと、探しているキーを目で追えない
- * （群の見出しは二列ぶんを跨がせる。keys.css）。
+ * One grid is kept across all groups. Splitting the grid per group would make the
+ * width of the key column vary from group to group, and the spellings would not line
+ * up vertically. Unaligned, the eye cannot track down the key it is looking for (the
+ * group heading spans both columns instead; keys.css).
  */
 function buildList(): HTMLElement {
   const list = document.createElement("div");
@@ -127,10 +137,10 @@ function buildList(): HTMLElement {
   return list;
 }
 
-// ------------------------------------------------------------ `F1` の覆い
+// -------------------------------------------------------- The `F1` overlay
 
 export interface KeysOptions {
-  /** 閉じたときに、元居た場所へ焦点を戻す。 */
+  /** On close, return focus to where it was. */
   restore: () => void;
 }
 
@@ -147,9 +157,9 @@ export function close(): void {
   root = null;
   const restore = options?.restore;
   options = null;
-  // **閉じたら焦点を返す。**返さないと、消えた要素に焦点が残ったまま矢印キーが
-  // どこにも届かなくなり、利用者からは「操作を受け付けなくなった」ように見える
-  // （outline.ts と同じ）。
+  // Return focus on close. Without it, focus stays on an element that is gone, the
+  // arrow keys reach nowhere, and to the user it looks as though the app has stopped
+  // accepting input (same as outline.ts).
   restore?.();
 }
 
@@ -159,7 +169,8 @@ export function open(opts: KeysOptions): void {
 
   root = document.createElement("div");
   root.className = "gera-keys";
-  // 覆いの何も無いところを押したら閉じる。**Esc を知らなくても抜けられること。**
+  // Pressing an empty part of the overlay closes it: there must be a way out even
+  // for someone who does not know about Esc.
   root.addEventListener("mousedown", (e) => {
     if (e.target === root) close();
   });
@@ -167,8 +178,9 @@ export function open(opts: KeysOptions): void {
 
   const box = document.createElement("div");
   box.className = "gera-keys-box";
-  // **絞り込む入力欄を持たない**（見出しの一覧と違い、数えるほどしかない）ので、
-  // 焦点の受け手が箱そのものになる。焦点が無いと `Esc` と `↑↓` がここに届かない。
+  // There is no filter input here (unlike the outline list, the entries can be
+  // counted on one's fingers), so the box itself receives focus. Without focus,
+  // `Esc` and `↑↓` never reach this element.
   box.tabIndex = -1;
   box.append(buildList());
 
@@ -179,26 +191,28 @@ export function open(opts: KeysOptions): void {
 
 function onKey(e: KeyboardEvent): void {
   if (e.isComposing) return;
-  // `F1` は握り潰さない。**出し入れの切り替えは main.ts の受け口が持つ**ので、
-  // ここで閉じると閉じた直後にもう一度開くことになる。
+  // Do not swallow `F1`. The open/close toggle belongs to the handler in main.ts, so
+  // closing here would mean reopening immediately after the close.
   if (e.key !== "Escape") return;
   close();
   e.preventDefault();
   e.stopPropagation();
 }
 
-// -------------------------------------------------- 空の文書のときの一覧
+// ------------------------------------------- The list on an empty document
 
 /**
- * 空の文書に、控えめな一覧を出す（このファイル冒頭の 2）。
+ * Shows the quiet list on an empty document (form 2 at the head of this file).
  *
- * **打鍵の邪魔をしない。**置き先は CodeMirror の本文ではなくスクロールする器
- * （`scrollDOM`）で、そこへの絶対配置である——**本文に差し込むと行の高さの計算が
- * ずれてカーソルの位置が狂う**（keys.css）。`pointer-events` も切ってあるので、
- * 文字の選択も奪わない。
+ * It must not get in the way of keystrokes. It is placed not in CodeMirror's content
+ * but in the scrolling container (`scrollDOM`), positioned absolutely within it —
+ * inserting it into the content would throw off the line-height calculation and put
+ * the cursor in the wrong place (keys.css). `pointer-events` is off too, so it does
+ * not steal text selection either.
  *
- * **打鍵のたびに呼ばれる**（main.ts の `refreshStatus`）ので、既に出ていれば
- * 何もしない。**同じ値でも DOM に触ると様式の計算をやり直させる**（第5-10節）。
+ * It is called on every keystroke (`refreshStatus` in main.ts), so it does nothing
+ * if already shown: touching the DOM forces a style recalculation even when the
+ * value is unchanged (§5-10).
  */
 let hint: HTMLElement | null = null;
 

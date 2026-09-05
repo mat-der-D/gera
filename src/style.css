@@ -1,12 +1,14 @@
-/* gera — 本文以外の常設 UI を持たない（設計 第5節）。
-   したがってこのファイルが受け持つのはウィンドウの地色と書体、そして
-   **閲覧・編集の両モードに等しく効くもの**だけである。後者は末尾の二つ
-   （`.gera-file` と `.gera-dirty`）で、**片方のモードにしか無い見た目を
-   ここに書かない**（版面は viewer.css、編集の装飾は editor.ts が持つ）。 */
+/* gera — no permanent UI other than the text itself (see DESIGN.md §5).
+   So what this file takes charge of is the window's background colour and
+   typefaces, plus only those things that apply equally to both the view and edit
+   modes. The latter are the two at the end (`.gera-file` and `.gera-dirty`);
+   anything that exists in only one of the modes must not be written here (the
+   page layout belongs to viewer.css, the editing decoration to editor.ts). */
 
 :root {
-  /* 第5節: 配布先ごとに実在する書体が違うためスタックで書く。
-     Windows には Noto CJK が無く、游明朝・游ゴシックが標準搭載である。 */
+  /* §5: which typefaces actually exist differs per distribution target, so they
+     are written as stacks. Windows has no Noto CJK; Yu Mincho and Yu Gothic ship
+     as standard there. */
   --font-serif: "Noto Serif CJK JP", "Noto Serif JP", "Yu Mincho", YuMincho,
                 "Hiragino Mincho ProN", "MS PMincho", serif;
   --font-sans:  "Noto Sans CJK JP", "Noto Sans JP", "Yu Gothic", YuGothic,
@@ -14,28 +16,30 @@
   --font-mono:  "Noto Sans Mono CJK JP", "Cascadia Mono", Consolas,
                 "DejaVu Sans Mono", monospace;
 
-  /* 字の大きさは**基準と倍率に分けてある**（第9-4節）。
-     - 基準（`--font-size-*`）は**利用者 CSS が決める場所**である。閲覧と編集で
-       値が違うのは、明朝 17px と ゴシック 16px が別の書体に合わせた寸法だからで、
-       片方に揃えるとどちらかの版面が崩れる。
-     - 倍率（`--font-scale`）は `Mod +/-/0` だけが触る（main.ts）。**利用者 CSS は
-       ここに触らない。**触ると `Mod 0` の戻り先が動く。
+  /* Font size is split into a base and a scale (§9-4).
+     - The base (`--font-size-*`) is the place the user CSS decides. The values
+       differ between view and edit because 17px mincho and 16px gothic are sizes
+       matched to different typefaces; forcing them to one value breaks the page
+       layout of one or the other.
+     - The scale (`--font-scale`) is touched only by `Mod +/-/0` (main.ts). The
+       user CSS must not touch this. Touching it moves where `Mod 0` returns to.
 
-     二つに分けてあるので、`Mod 0` は**利用者が基準として決めた大きさ**に戻る。
-     gera の既定に戻るのではない——利用者の設定を壊す「戻す」は不具合である。 */
+     Because the two are separated, `Mod 0` returns to the size the user set as
+     their base. It does not return to gera's default — a "reset" that destroys
+     the user's settings is a defect. */
   --font-size-view: 17px;
   --font-size-edit: 16px;
   --font-scale: 1;
 
-  /* ゲラ＝校正刷り。地色は紙に寄せる。 */
+  /* gera = a proof sheet. The background colour leans towards paper. */
   --bg:       #faf8f4;
   --fg:       #23211d;
-  --dim:      #a9a196;  /* 記法記号。常に見えるが、読みの邪魔をしない濃さ */
+  --dim:      #a9a196;  /* Markup symbols. Always visible, but not dark enough to disturb reading */
   --rule:     #ddd6ca;
   --accent:   #8a5a2b;
   --code-bg:  #f0ece3;
   --sel:      #dfe6ef;
-  --zebra:    #f4f1ea;  /* 閲覧モードの表の縞。列数の多い表で行を追うためだけのもの */
+  --zebra:    #f4f1ea;  /* Table striping in view mode. Purely for following rows in wide tables */
 }
 
 @media (prefers-color-scheme: dark) {
@@ -51,119 +55,141 @@
   }
 }
 
-/* 編集モードの字の大きさ。**閲覧モードだけ拡大されるのでは往復が成立しない。**
-   editor.ts は CodeMirror の theme で `.cm-editor` に 16px を当てており、
-   その規則はクラス二つぶんの強さを持つ。**`#app` を前に置くのは、読み込み順に
-   依存せず確実に上回るためである**（theme の style 要素がどこに差し込まれるかは
-   CodeMirror 側の都合で、こちらから決められない）。
-   editor.ts の中の寸法はすべて em の相対指定なので、ここが動けば全体が比例する。 */
+/* Font size in edit mode. Going back and forth does not work if only view mode
+   scales. editor.ts applies 16px to `.cm-editor` through a CodeMirror theme, and
+   that rule carries the weight of two classes. `#app` is put in front so as to
+   beat it for certain, without depending on load order (where the theme's style
+   element gets inserted is CodeMirror's business, not something we can decide).
+   Every dimension inside editor.ts is a relative em value, so if this moves the
+   whole thing scales in proportion. */
 #app .cm-editor { font-size: calc(var(--font-size-edit) * var(--font-scale)); }
 
 html, body, #app { height: 100%; margin: 0; }
 body { background: var(--bg); color: var(--fg); }
 
-/* ------------------------------------------------------ スクロールバー */
+/* ------------------------------------------------------ Scrollbars */
 
-/* **アイドル時に 60fps でフレームを出し続けるバグの修正である**（設計 第5-2節）。
+/* This is the fix for the bug that keeps emitting frames at 60fps while idle
+   (see DESIGN.md §5-2).
 
-   WebKitGTK の既定のスクロールバーは重ね置き（オーバーレイ）で、出てから
-   消えるまでを 3 秒かけて描き直す。**そのあいだ毎フレーム——60fps で——
-   描画が走る。**実測（WebKitGTK 2.52、ネイティブ Wayland、トップレベル面の
-   `wl_surface.attach` + `commit` を数えた）:
+   WebKitGTK's default scrollbar is an overlay scrollbar, and it takes 3 seconds
+   to repaint itself from appearing to fading out. Painting runs every frame —
+   at 60fps — for that whole time. Measured (WebKitGTK 2.52, native Wayland,
+   counting `wl_surface.attach` + `commit` on the toplevel surface):
 
-   - 何もしていない状態から **3.006 秒・181 フレーム**の連続描画が 1 度
-   - **スクロールするたびに出し直される。**送るごとに 1 秒（62 フレーム）、
-     手を止めて 3 秒後にさらに 3 秒（181 フレーム）
-   - 損傷領域は毎回 `(985, 70, 21, 713)`——**右端のスクロールバーの帯だけ**で、
-     本文は 1 ピクセルも変わっていない
+   - From a completely idle state, one run of 3.006 seconds / 181 frames of
+     continuous painting
+   - It is re-triggered on every scroll. One second (62 frames) per scroll
+     gesture, then a further 3 seconds (181 frames) three seconds after the hand
+     stops
+   - The damage region is `(985, 70, 21, 713)` every time — only the strip of the
+     scrollbar at the right edge; not one pixel of the text changes
 
-   **gera の JS は無関係だった。**素の WebKitGTK に 40 行の HTML を読ませる
-   だけで同じ数字が出る。`content-visibility` を切っても、`hr` だけの文書
-   （`content-visibility: visible`）でも変わらない。**スクロールできる文書で
-   あることだけが条件で、収まりきる短い文書では 0 フレームである。**
+   gera's JS had nothing to do with it. Simply having bare WebKitGTK load 40 lines
+   of HTML produces the same numbers. Turning off `content-visibility` changes
+   nothing, and neither does a document containing only an `hr`
+   (`content-visibility: visible`). The only condition is that the document be
+   scrollable; a short document that fits produces 0 frames.
 
-   `::-webkit-scrollbar` を一つでも書くと、WebKit は OS 側の重ね置きをやめて
-   **CSS で描くスクロールバー**に切り替える。**こちらは薄くなるアニメーションを
-   持たない**ので、静止していればフレームは出ない（同じ計測で 674 → 15）。
+   Writing even one `::-webkit-scrollbar` rule makes WebKit drop the OS overlay
+   and switch to a scrollbar drawn in CSS. That one has no fade-out animation, so
+   no frames are emitted while things are still (674 → 15 in the same
+   measurement).
 
-   **代償は幅である。**重ね置きは場所を取らないが、CSS のスクロールバーは
-   版面から 10px を引く（実測 gutter 0 → 10px）。消してしまえば代償は無いが、
-   **長い文書でいまどこを読んでいるかが分からなくなる**——2,838 行の文書を
-   通しで読むのが主用途である以上（第2節）、そちらのほうが失うものが大きい。
+   The cost is width. An overlay takes no space, but the CSS scrollbar subtracts
+   10px from the page (measured: gutter 0 → 10px). Removing the scrollbar
+   altogether would cost nothing, but then there is no way to tell where you are
+   in a long document — given that the primary use is reading a 2,838-line
+   document straight through (§2), that loses more.
 
-   `*` に当てるのは、**閲覧モードの本文だけでなく、編集モード・コードブロック・
-   表・見出しの一覧も同じアニメーションを持つ**からである。片方だけ直すと、
-   残ったほうが同じ費用を払い続ける。 */
+   It is applied to `*` because not only the text in view mode but also edit mode,
+   code blocks, tables and the heading list carry the same animation. Fixing only
+   one leaves the rest paying the same cost. */
 *::-webkit-scrollbar { width: 10px; height: 10px; }
 *::-webkit-scrollbar-track { background: transparent; }
-/* 罫と同じ濃さ。読んでいる邪魔をせず、位置は分かる。 */
+/* Same tone as the rules. It does not disturb reading, yet the position is clear. */
 *::-webkit-scrollbar-thumb { background: var(--rule); border-radius: 5px; }
 *::-webkit-scrollbar-thumb:hover { background: var(--dim); }
 *::-webkit-scrollbar-corner { background: transparent; }
 
-/* -------------------------------------------- 開いているファイルと未保存の印 */
+/* -------------------------------- The open file and the unsaved marker */
 
-/* **タイトルバーが当てにならないので、その二つを本文側に出す**（2026-09-04）。
-   setWindowTitle は `• DESIGN.md — gera` を正しく送っているのに、本人の環境
-   （ネイティブ Wayland / GNOME）では初期値の `gera` のまま描かれる。GTK と
-   mutter の領分で、アプリ側から手が届かない。X11 に逃げる道はコールド起動が
-   560 ms 遅くなるので採れない（第5-8節）。**タイトルバーの設定は残してある**
-   ——X11 では効いており、Windows でも効く見込みがある。
+/* The title bar cannot be relied on, so these two are surfaced in the text area
+   instead (2026-09-04). setWindowTitle correctly sends `• DESIGN.md — gera`, yet
+   in the owner's environment (native Wayland / GNOME) the initial value `gera`
+   stays painted. That is GTK and mutter territory, out of the app's reach.
+   Escaping to X11 is not an option because it makes cold start 560 ms slower
+   (§5-8). The title bar setting is kept — it works on X11, and is expected to
+   work on Windows.
 
-   **性質が違うので二つに分けた。**
+   They were split in two because they are different in kind.
 
-   - **どのファイルか、そして `F1` があること**（`.gera-file`）——**画面の左上に
-     常に出す。**下記
-   - **未保存かどうか**（`.gera-dirty`）——**読んでいる最中も視界に入る必要がある。**
-     窓の上端に細い線を一本引く（このファイルの末尾） */
+   - Which file, and the fact that `F1` exists (`.gera-file`) — always shown in
+     the top left of the screen. See below
+   - Whether there are unsaved changes (`.gera-dirty`) — this has to stay in view
+     even in the middle of reading. A single thin line along the top edge of the
+     window (end of this file) */
 
-/* 開いているファイルの名前と、`F1` があることの案内。
+/* The name of the open file, plus the hint that `F1` exists.
 
-   **2026-09-04、本人の指示で常設に変えた。**それまでは本文の流れの先頭に置いて
-   あり、少し送れば流れて消えた。本人の言:「**左上に常に表示されているほうが
-   いいですね。なんならファイル名も上部にずっと表示されてる**ほうがいいかも」。
+   On 2026-09-04 this was made permanent on the owner's instruction. Until then it
+   sat at the head of the text flow and scrolled away after a little scrolling.
+   The owner's words: 「左上に常に表示されているほうがいいですね。なんなら
+   ファイル名も上部にずっと表示されてるほうがいいかも」 (roughly: "it would be
+   better always displayed in the top left; in fact it might be better to have the
+   file name shown at the top the whole time too").
 
-   **これは設計 第9節「本文以外の常設 UI を置かない」を緩める判断である。**
-   第9節は既に「初版の出発点であって恒久的な禁止ではない」と訂正されており、
-   本人の「まずスタートとしてはそれぐらいシンプルに作って、すこしずつ機能を
-   足せばよい」という方針の内側にある。**とはいえ常設にする以上、代償は最小に
-   する。**そのために次を守っている。
+   This is a decision that relaxes DESIGN.md §9, 「本文以外の常設 UI を置かない」
+   ("place no permanent UI other than the text"). §9 has already been corrected to
+   say it is 「初版の出発点であって恒久的な禁止ではない」 ("a starting point for
+   the first version, not a permanent prohibition"), and this sits inside the
+   owner's stated policy: 「まずスタートとしてはそれぐらいシンプルに作って、
+   すこしずつ機能を足せばよい」 ("to start with, build it about that simple, then
+   add features little by little"). Still, since it is permanent, the cost is kept
+   to a minimum. To that end the following are observed.
 
-   - **本文の読める幅を一切狭めない。**`position: fixed` で版面の外に居るので、
-     `.gera-doc` の `max-width` にも `.cm-content` の幅にも触れない。長い文書を
-     読む道具であり、**行長は版面の質そのものである**（第9-1節）
-   - **本文の先頭を隠さない。**閲覧モードの上余白は 3.5rem（viewer.css）、編集
-     モードも 3.5rem（editor.ts）で、この札の背の高さ（約 2.6rem）より低い位置に
-     本文が始まることはない。**流れの中から抜いたぶん、むしろ本文は上に来る**
-   - **地色を敷く。**送った本文がこの札の裏へ潜るとき、地色が無いと文字と文字が
-     重なって双方読めなくなる。敷けば、隠れるのは**もう読み終えた側**だけになる
-   - **動きを持たない。**出入りにも移り変わり（transition / animation）にも
-     フレームを使わない。アイドル中に 60fps で描き続ける不具合を直したばかり
-     である（第5-10節）
-   - **窓に固定なので、閲覧・編集の両モードで同じ位置・同じ見た目になる。**
-     モードごとに置き場を持たない（以前は閲覧側が本文の先頭、編集側が
-     `.cm-scroller` の中と、二箇所に分かれていた）
+   - It never narrows the readable width of the text. `position: fixed` puts it
+     outside the page, so it touches neither `.gera-doc`'s `max-width` nor the
+     width of `.cm-content`. This is a tool for reading long documents, and line
+     length is the quality of the page itself (§9-1)
+   - It does not hide the start of the text. The top margin is 3.5rem in view mode
+     (viewer.css) and 3.5rem in edit mode too (editor.ts), so the text never
+     begins higher than this label's height (about 2.6rem). Having been pulled out
+     of the flow, the text in fact sits higher than before
+   - It lays down a background colour. When scrolled text passes under this label,
+     without a background the characters overlap and neither is readable. With it,
+     the only thing hidden is the part already read
+   - It has no motion. No frames are spent on appearing, disappearing, or
+     transitions/animations. The bug that kept painting at 60fps while idle was
+     only just fixed (§5-10)
+   - Being fixed to the window, it has the same position and the same appearance
+     in both view and edit modes. It has no per-mode home (previously the view
+     side put it at the head of the text and the edit side inside `.cm-scroller`,
+     split across two places)
 
-   **地の文と明確に分ける**（第9-4節）。本文は明朝なのでゴシックにし、色は
-   `--dim` に落とし、字も小さくする。**寸法は rem で書く**——`--font-scale`
-   （`Mod +/-`）が動かすのは**版面**であって道具ではない（keys.css と同じ理由）。
-   本文を大きくしたときに札まで太ると、常設であるぶん邪魔になる。 */
+   Clearly separated from the running text (§9-4). The text is mincho, so this is
+   gothic; the colour drops to `--dim` and the characters are smaller. Dimensions
+   are written in rem — what `--font-scale` (`Mod +/-`) moves is the page, not the
+   tools (same reason as keys.css). If the label fattened along with the text, it
+   would get in the way all the more for being permanent. */
 .gera-file {
   position: fixed;
   top: 0;
   left: 0;
-  /* 上の余白 0.75rem は未保存の線（`.gera-dirty`、6px）より下に文字を置くための
-     ものである。**線の有無で位置が動かない**ほうがよいので、線が出ていなくても
-     同じだけ空ける。線のほうが上に描かれる（z-index 20 対 5）。 */
+  /* The 0.75rem top padding exists to place the text below the unsaved line
+     (`.gera-dirty`, 6px). It is better that the position not move depending on
+     whether the line is there, so the same space is left even when it is not
+     shown. The line is painted on top (z-index 20 versus 5). */
   padding: 0.75rem 1rem 0.6rem 1.5rem;
-  /* 長いファイル名で窓の幅いっぱいに広がらないようにする。**広がるほど、送った
-     本文を隠す面積が増える。** */
+  /* Keep a long file name from spreading across the full width of the window.
+     The wider it spreads, the more area of scrolled text it hides. */
   max-width: min(calc(100% - 3rem), 26rem);
   box-sizing: border-box;
-  /* 本文が裏へ潜るので地色を敷く（上記）。 */
+  /* The text passes underneath, so lay down a background colour (see above). */
   background: var(--bg);
-  /* 見出しの一覧・検索・キー一覧（いずれも z-index: 10）の**下**に入る。
-     **道具を出している間まで前に出る必要はない。**未保存の線（20）よりも下。 */
+  /* It goes under the heading list, search, and key list (all z-index: 10).
+     There is no need for it to come forward while a tool is open. Below the
+     unsaved line (20) as well. */
   z-index: 5;
   font-family: var(--font-sans);
   font-size: 0.8rem;
@@ -171,57 +197,67 @@ body { background: var(--bg); color: var(--fg); }
   letter-spacing: 0.02em;
   color: var(--dim);
   white-space: nowrap;
-  /* 常設なので、本文を選ぶときに巻き込まれると邪魔になる。**`pointer-events` は
-     切らない**——フルパスを見せる `title` 属性が、乗せて初めて出るからである。 */
+  /* Being permanent, it gets in the way if it is caught up in a text selection.
+     `pointer-events` is not turned off, though — the `title` attribute that shows
+     the full path only appears on hover. */
   user-select: none;
-  /* **名前と F1 の案内を横に並べる。**flex にしてあるのは、名前が長いときに
-     省略されるのを名前の側だけに留めるためである（下の `.gera-file-name`）。
-     一つの箱で省略すると、先に切り落とされるのは後ろにある案内のほうになる。 */
+  /* Lay the name and the F1 hint out side by side. It is flex so that, when the
+     name is long, the ellipsis is confined to the name alone (see
+     `.gera-file-name` below). Eliding within a single box would cut off the hint
+     at the back first. */
   display: flex;
   align-items: baseline;
   gap: 1.4em;
 }
 
-/* 長いファイル名は折り返さず、はみ出しを省略する。**二行になると札が背高になり、
-   そのぶん本文を隠す**うえ、ファイル名は読むものではなく見分けるものである。
-   **無題のときは `hidden` で畳む**（main.ts）——空の箱を残すと flex の間隔だけが
-   残り、案内が理由もなく右へずれる。 */
+/* A long file name does not wrap; the overflow is elided. Two lines would make
+   the label taller and hide that much more of the text, and besides, a file name
+   is something you identify, not something you read. When untitled it is folded
+   away with `hidden` (main.ts) — leaving an empty box would leave the flex gap
+   behind and shift the hint to the right for no reason. */
 .gera-file-name {
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-/* **`F1` があることを画面で示す**（2026-09-04）。gera は本文以外の常設 UI を
-   ほとんど持たない（第9節）ので、**一覧が出せても、出せることを知らなければ
-   意味がない。**
+/* Show on screen that `F1` exists (2026-09-04). gera has almost no permanent UI
+   other than the text (§9), so being able to bring up the list means nothing if
+   you do not know it can be brought up.
 
-   **ファイル名と同じ重みにした**（2026-09-04）。以前はファイル名より更に薄く
-   小さくしていたが、**初めて起動した人にとってはファイル名より案内のほうが
-   大事であり、重みが逆に付いていた**（本人の実機のスクリーンショットで確認）。
-   かといって案内だけを目立たせると常設の広告になるので、**同じ書体・同じ
-   大きさ・同じ濃さに揃えるところで止める。**
+   Given the same weight as the file name (2026-09-04). It used to be even fainter
+   and smaller than the file name, but for someone starting the app for the first
+   time the hint matters more than the file name, so the weighting was backwards
+   (confirmed from a screenshot of the owner's own machine). Making only the hint
+   stand out would turn it into a permanent advertisement, though, so it stops at
+   matching typeface, size, and tone.
 
-   **無題のときも出る。**ファイル名が無いことは案内が要らない理由にならない
-   ——むしろ、無題で始まるのは初めて起動した人である見込みが高い（第3節）。
-   ただし**空の文書の控えめな一覧（`.gera-keys-hint`）が出ている間は畳む**
-   （main.ts）——同じことを二度言わない。 */
+   It appears when untitled too. Having no file name is no reason for the hint to
+   be unnecessary — if anything, someone starting with an untitled document is
+   likely to be starting the app for the first time (§3). It is folded away,
+   however, while the discreet list for an empty document (`.gera-keys-hint`) is
+   showing (main.ts) — do not say the same thing twice. */
 .gera-keys-tip {
   flex: none;
 }
 
-/* 未保存の印。**窓の上端に細い線を一本引くだけである。**
+/* The unsaved marker. It draws nothing but a single thin line along the top edge
+   of the window.
 
-   - **本文の幅を奪わない。**position: fixed なので版面の外に居る。長い文書を
-     読む道具であり、行長は版面の質そのものである（第9-1節）
-   - **地色を変える案は採らなかった。**長い日本語を読んでいる最中に紙の色が
-     動くと気が散る。**縁の線なら、見ているのは本文のままで、視野の端に入る**
-   - **色は `--accent`。**利用者 CSS で変えられる（第9-4節）。リンクや箇条書きの
-     点と同じ色で、gera が「ここが要点」に使っている色である
-   - **移り変わり（transition / animation）は書かない。**出入りにアニメーションを
-     付けると、そのあいだ毎フレーム描画が走る。**アイドル中に 60fps で描き続ける
-     不具合を直したばかりである**（第5-10節）
-   - 見出しの一覧と検索（どちらも z-index: 10）より上に置く。**道具を出している
-     間も未保存かどうかは変わらない**ので、隠す理由がない */
+   - It takes no width from the text. position: fixed puts it outside the page.
+     This is a tool for reading long documents, and line length is the quality of
+     the page itself (§9-1)
+   - Changing the background colour was considered and rejected. The paper colour
+     shifting in the middle of reading long Japanese is distracting. A line at the
+     edge keeps your eyes on the text while still entering peripheral vision
+   - The colour is `--accent`. It can be changed from the user CSS (§9-4). It is
+     the same colour as links and list bullets — the colour gera uses for "this is
+     the point"
+   - No transition or animation is written. Animating the appearance and
+     disappearance makes painting run every frame for that duration. The bug that
+     kept painting at 60fps while idle was only just fixed (§5-10)
+   - It sits above the heading list and search (both z-index: 10). Whether there
+     are unsaved changes does not change while a tool is open, so there is no
+     reason to hide it */
 .gera-dirty {
   position: fixed;
   top: 0;

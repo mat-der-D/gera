@@ -1,20 +1,23 @@
 /**
- * ホスト（Tauri）との接点。設計 第7節。
+ * The seam with the host (Tauri). See DESIGN.md §7.
  *
- * Rust 側の責務はファイル入出力、ダイアログ、ウィンドウ状態の保存のみである。
- * その呼び出しを **このファイル一箇所に集める**。
+ * The Rust side is responsible only for file I/O, dialogs, and saving window state.
+ * Every call to it is gathered into this one file.
  *
- * 抽象化の層は設けない。実装が一つしかない層は、それ自体が概念を一つ増やすからである
- * （第3節「覚えるべき概念が少ないこと」）。乗り換えが必要になったとき、
- * 書き直す対象がここだけだと分かっていれば足りる。
+ * No abstraction layer is introduced. A layer with only one implementation is itself
+ * one more concept to learn (§3, 「覚えるべき概念が少ないこと」 — "few concepts to
+ * remember"). If a switch of host is ever needed, it is enough to know that this is
+ * the only place to rewrite.
  *
- * ファイル入出力に fs プラグインを使わず Rust コマンドを通すのは、
- * 攻撃面を read_file と write_file の二つに絞るためでもある（第7節の sanitize の項）。
+ * File I/O goes through Rust commands rather than the fs plugin partly to narrow the
+ * attack surface down to the two of read_file and write_file (the sanitize item
+ * in §7).
  *
- * **ダイアログとリンクを開く操作も Rust 側で行う**（第7-4節 (a)(d)）。フロント側の
- * プラグインで開くと、選ばれたパスの登録も URL のスキーム検証もフロントの申告に
- * 頼ることになり、webview が乗っ取られた時点で回避される。ここにあるのは
- * 「開いてくれ」と頼む口だけで、**判断は一つも持っていない。**
+ * Opening dialogs and links is done on the Rust side too (§7-4 (a)(d)). Opening them
+ * through a front-end plugin would make both the registration of the chosen path and
+ * the scheme validation of the URL depend on what the front end declares, and both
+ * would be bypassed the moment the webview is taken over. What is here is only the
+ * mouth that asks "please open this"; it holds no decision at all.
  */
 import { invoke } from "@tauri-apps/api/core";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
@@ -25,14 +28,16 @@ export interface Session {
   text: string;
 }
 
-/** Tauri の中で動いているか。ブラウザ単体でも画面を確認できるようにするための判定。 */
+/** Whether we are running inside Tauri. This test exists so the screen can also be
+ * checked in a plain browser. */
 export const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 const SESSION_KEY = "gera:session";
 
 /**
- * 開くダイアログ。**戻ってきたパスは、その時点で Rust 側の許可済み集合に入っている。**
- * 呼び出し側は登録の面倒を見なくてよい（見る手段も無い。第7-4節 (a)）。
+ * The open dialog. A path that comes back is, by that point, already in the Rust
+ * side's allowed set. The caller does not have to take care of registering it (nor
+ * does it have any means of seeing it; §7-4 (a)).
  */
 export async function pickFileToOpen(): Promise<string | null> {
   if (!inTauri) return null;
@@ -45,12 +50,13 @@ export async function pickPathToSave(current: string | null): Promise<string | n
 }
 
 /**
- * 起動時にコマンドライン引数で渡されたファイル（第9-5節）。
+ * The file passed on the command line at launch (§9-5).
  *
- * `path` が入っていれば、それは**存在して読めることを Rust 側が確かめ済み**で、
- * 許可済み集合にも入っている——そのまま `readFile` に渡してよい。
- * `error` は「引数はあったが開けなかった」ときの理由である。**両方が空**なら
- * 引数が無かったということで、これまでどおり退避からの復元に進む。
+ * If `path` is filled in, the Rust side has already confirmed that it exists and can
+ * be read, and it is in the allowed set — it can be handed straight to `readFile`.
+ * `error` is the reason for "there was an argument but it could not be opened". If
+ * both are empty, there was no argument, and we proceed as before to restoring from
+ * the auto-saved session.
  */
 export interface Startup {
   path: string | null;
@@ -63,10 +69,11 @@ export async function initialPath(): Promise<Startup> {
 }
 
 /**
- * http / https のリンクを OS の既定ブラウザへ渡す（第7-4節 (d)、第9-1節）。
+ * Hands an http / https link to the OS's default browser (§7-4 (d), §9-1).
  *
- * **スキームの検証はここでしない。**Rust 側が http と https だけを通す。
- * こちらで弾いても、webview が乗っ取られれば invoke だけが直接飛んでくる。
+ * The scheme is not validated here. The Rust side lets only http and https through.
+ * Rejecting on this side would achieve nothing: once the webview is taken over, the
+ * invoke alone arrives directly.
  */
 export async function openExternal(url: string): Promise<void> {
   if (!inTauri) {
@@ -77,12 +84,13 @@ export async function openExternal(url: string): Promise<void> {
 }
 
 /**
- * 読んだ本文と、そのときの指紋（第9-6節）。
+ * The text that was read, together with its digest at that moment (§9-6).
  *
- * **指紋を別の口にせず、読んだら必ず一緒に返る。**別の口にすると「読んだが指紋を
- * 取り損ねた」状態が作れてしまい、そこからの保存は突き合わせる相手を持たない
- * ——つまり黙って上書きする。中身は Rust 側だけが決める文字列で、
- * こちらは**等しいかどうかしか見ない。**
+ * The digest is not a separate call: reading always returns it alongside. A separate
+ * call would make it possible to reach a state of "read, but failed to take the
+ * digest", and a save from there has nothing to compare against — that is, it would
+ * silently overwrite. The content is a string decided solely by the Rust side; this
+ * side only ever looks at whether two of them are equal.
  */
 export interface FileContents {
   text: string;
@@ -94,32 +102,35 @@ export async function readFile(path: string): Promise<FileContents> {
 }
 
 /**
- * いまディスクにある内容の指紋（第9-6節）。フォーカスが戻ったときと、
- * それ以外に確かめたい場面で呼ぶ。
+ * The digest of what is on disk right now (§9-6). Called when focus returns, and in
+ * any other situation where we want to check.
  *
- * **計算は Rust 側で行う。**本文を IPC で運んでこちらで数えるのは、
- * 指紋を得るためだけに一往復を太らせることになる。
- * 読めなければ例外である（消された・権限が変わった）。
+ * The computation happens on the Rust side. Carrying the text over IPC and counting
+ * it here would fatten a round trip merely to obtain a digest. If it cannot be read,
+ * this throws (deleted, or permissions changed).
  */
 export async function fileDigest(path: string): Promise<string> {
   return invoke<string>("file_digest", { path });
 }
 
 /**
- * 書き込みの結果（第9-6節）。
+ * The result of a write (§9-6).
  *
- * **食い違いは例外ではない。**例外は「保存という操作が失敗した」ことを表す形で、
- * 呼び出し側では他の失敗と同じ帯になる。ここで起きているのは失敗ではなく
- * **予定どおりの拒否**であり、利用者へ見せるものも違う（出口の案内）。
+ * A mismatch is not an exception. An exception is the shape that means "the save
+ * operation failed", and on the calling side it becomes the same banner as any other
+ * failure. What happens here is not a failure but a refusal exactly as designed, and
+ * what the user is shown differs too (guidance toward a way out).
  */
 export type Written = { kind: "saved"; digest: string } | { kind: "conflict" };
 
 /**
- * 書き込む。`expect` を渡すと、Rust 側が**書く直前に**ディスクの内容と
- * 突き合わせ、食い違っていれば書かずに `conflict` を返す（第9-6節）。
+ * Writes. If `expect` is given, the Rust side compares against the contents on disk
+ * immediately before writing, and on a mismatch returns `conflict` without writing
+ * (§9-6).
  *
- * **`expect` を `null` にすると突き合わせない。**別名保存が通る道である
- * ——食い違っているときの唯一の出口なので、ここを塞ぐと逃げ場が無くなる。
+ * Passing `null` for `expect` skips the comparison. That is the path save-as takes —
+ * it is the only way out when there is a mismatch, so closing it would leave nowhere
+ * to escape to.
  */
 export async function writeFile(
   path: string,
@@ -130,10 +141,11 @@ export async function writeFile(
 }
 
 /**
- * 不可視の自動退避（第11節）。
+ * The invisible automatic session backup (§11).
  *
- * 「保存」という**概念**を UI に出さないことと、退避の**機構**を持つことは両立する。
- * 3000 字超を編集中に落ちて全部消える経路を、コマンドを増やさずに塞ぐためのもの。
+ * Keeping the concept of "saving" out of the UI and having a mechanism for backup are
+ * not in conflict. This exists to close the path where a crash while editing over
+ * 3000 characters loses everything — without adding a command.
  */
 export async function loadSession(): Promise<Session | null> {
   if (!inTauri) {
@@ -160,16 +172,17 @@ export async function copyToClipboard(text: string): Promise<void> {
 }
 
 /**
- * 利用者 CSS（第9-4節、第14節の実装順序 7）。
+ * User CSS (§9-4; implementation step 7 in §14).
  *
- * **パスを渡さない。**`readFile` は「利用者が自ら指し示したパスだけ」を通す
- * 仕組み（第7-4節 (a)）で、`user.css` はその集合に入らない。Rust 側に
- * **引数を取らない専用の口**を置き、置き場の決定はそちらに閉じてある。
- * ここから読み先を指定する手段は無い——**無いことが、この仕組みの要である。**
+ * No path is passed. `readFile` is a mechanism that lets through only paths the user
+ * pointed at themselves (§7-4 (a)), and `user.css` is not in that set. A dedicated
+ * call that takes no arguments is placed on the Rust side, and the decision of where
+ * the file lives is closed up over there. There is no means from here of specifying
+ * what to read — and that absence is the crux of the mechanism.
  *
- * `css` が `null` なのは「ファイルが無かった」ときで、これは失敗ではない。
- * 読めなかったときだけ例外になる。`path` は**どこに置けばよいかを利用者へ
- * 伝えるため**に必ず返る（設定画面を作らないので、他に伝える場所が無い）。
+ * `css` being `null` means "the file was not there", which is not a failure. Only an
+ * unreadable file throws. `path` always comes back so the user can be told where to
+ * put the file (there is no settings screen, so there is nowhere else to tell them).
  */
 export interface UserCss {
   path: string;
@@ -182,10 +195,10 @@ export async function readUserCss(): Promise<UserCss> {
 }
 
 /**
- * ウィンドウのタイトル。
+ * The window title.
  *
- * 第5節が禁じているのは**ウィンドウの中身**に常設 UI を置くことである。
- * タイトルバーは OS 側の領分で、本文の面積を奪わないため、ここは使う。
+ * What §5 forbids is placing permanent UI inside the window's contents. The title bar
+ * is the OS's territory and takes no area away from the text, so this one is used.
  */
 export async function setWindowTitle(title: string): Promise<void> {
   if (!inTauri) {

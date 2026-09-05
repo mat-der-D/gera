@@ -1,54 +1,58 @@
 /**
- * 文書内を検索する（設計 第9-2節、第14節の実装順序 6）。
+ * Search within the document (see DESIGN.md §9-2, and step 6 of the implementation
+ * order in §14).
  *
- * **見出し一覧（outline.ts）と対になる道具である。**一覧が「章から探す」もので
- * あるのに対し、こちらは「語から探す」ものである。本人側の痛み——「知りたいことが
- * 書いてある場所を探すだけでも大変」（第2節）——に効く二つ目の道具にあたる。
+ * This is the companion tool to the heading outline (outline.ts). Where the outline
+ * is for finding something by chapter, this is for finding it by word. It addresses
+ * the second of the author's own pains — "just locating where the thing I want to
+ * know is written is hard work" (§2).
  *
- * **一覧と違って、本文の上に重ねない。**検索は**当たった箇所を見ながら**使う
- * 道具であり、本文を覆うと目的そのものが消える。したがって入力欄は画面の隅に
- * 小さく出す。**右下に置くのは、飛び先が画面の上端に来るからである**
- * （viewer.ts の MARGIN）——上に出すと、いま当たった箇所を自分で隠すことになる。
+ * Unlike the outline, it does not cover the text. Search is a tool you use while
+ * looking at the hit, so covering the text would destroy the very purpose. The input
+ * field therefore appears small, in a corner of the screen. It sits at the bottom
+ * right because the jump target lands at the top edge of the screen (MARGIN in
+ * viewer.ts) — put it at the top and it would hide the hit you just landed on.
  *
- * **常設ではない。**`Mod+F` で出て `Esc` で消える。第9節の「常設 UI を置かない」に
- * 反しないのは一覧と同じ理由である。
+ * It is not permanent UI. `Mod+F` brings it up, `Esc` dismisses it. It does not
+ * violate "no permanent UI" (§9) for the same reason the outline does not.
  *
- * **検索するのは DOM ではなく本文の文字列である。**閲覧モードは段階的に描画し
- * （viewer.ts の EAGER と IntersectionObserver）、`content-visibility: auto` も
- * 掛かっているので、**画面の外は「そこに在るが組まれていない」状態がありうる。**
- * `innerText` を舐める実装は文書の大半を取りこぼし、ブラウザ既定の `Ctrl+F` が
- * 使えないのもこれが理由である。一覧が見出しをトークンから取っているのと同じ
- * 考え方で、**描画の進み具合に一切依存しない側**——main.ts が持つ本文——を見る。
+ * What is searched is the source text, not the DOM. View mode renders progressively
+ * (EAGER and IntersectionObserver in viewer.ts) and `content-visibility: auto` also
+ * applies, so off-screen content can be "present but not laid out". An
+ * implementation that walks `innerText` would miss most of the document; this is
+ * also why the browser's built-in `Ctrl+F` is unusable here. Following the same
+ * thinking as the outline taking its headings from tokens, we look at the side that
+ * does not depend at all on render progress — the source text held by main.ts.
  *
- * **閲覧モード側の強調（このファイル後半）もここに置く。**viewer.ts に置くと、
- * 閲覧モードは起動時に読む側なので**検索を一度も使わない起動でも運ぶ荷物**に
- * なる。起動速度が第一優先である以上（第4節）、検索のために払う費用は
- * `Mod+F` を押した人だけが払う形にする。
+ * The view-mode highlighting (second half of this file) lives here too. Putting it
+ * in viewer.ts would make it baggage carried on every startup — even startups that
+ * never use search — because view mode is read at launch. Since startup speed is the
+ * first priority (§4), the cost of search is paid only by whoever presses `Mod+F`.
  *
- * このモジュールは main.ts から**動的に import される。**`Mod+F` を押すまで
- * 読み込まれない（CSS も同様）。outline.ts と同じ形である。
+ * This module is imported dynamically from main.ts. It is not loaded until `Mod+F`
+ * is pressed (nor is its CSS). Same shape as outline.ts.
  */
 import { scrollToLine } from "./viewer";
 import "./find.css";
 
-/** 当たり一つ。行番号は閲覧モードの飛び先、位置は編集モードの選択範囲に使う。 */
+/** One hit. The line number is the view-mode jump target; the index is the edit-mode selection range. */
 export interface FindMatch {
-  /** 元ソースの行番号（0 始まり）。 */
+  /** Line number in the source (0-based). */
   line: number;
-  /** 本文の先頭から数えた位置（文字数）。 */
+  /** Offset from the start of the text, in characters. */
   index: number;
 }
 
 export interface FindOptions {
-  /** 本文の正（main.ts の `text`）。**これを検索する。** */
+  /** The authoritative text (`text` in main.ts). This is what gets searched. */
   text: string;
-  /** 検索を始める行。**最初の当たりはここから後ろで探す。** */
+  /** The line search starts from. The first hit is looked for at or after this line. */
   from: number;
-  /** いま選んでいる当たりへ飛んで見せる。`query` は強調の綴りとして要る。 */
+  /** Jump to and show the currently selected hit. `query` is needed as the spelling to highlight. */
   show(query: string, match: FindMatch): void;
-  /** 強調を消す。閉じたときに呼ばれる。 */
+  /** Clear the highlight. Called on close. */
   clear(): void;
-  /** 閉じたときに、元居た場所へ焦点を戻す。 */
+  /** On close, return focus to where it was. */
   restore(): void;
 }
 
@@ -57,41 +61,46 @@ let input: HTMLInputElement | null = null;
 let counter: HTMLElement | null = null;
 let options: FindOptions | null = null;
 
-/** いまの当たりの一覧と、その中で選んでいる位置。 */
+/** The current list of hits, and which one within it is selected. */
 let matches: FindMatch[] = [];
 let current = 0;
-/** 語を打ち直したときに「ここから後ろ」で探し始める行。飛ぶたびに付いてくる。 */
+/** The line to start searching "from here on" when the query is retyped. It follows along on every jump. */
 let anchor = 0;
 
-/** 各行の開始位置。当たりの位置から行番号を引くのに使う（open のたびに作る）。 */
+/** Start offset of each line. Used to derive a line number from a hit's offset (rebuilt on every open). */
 let lineStarts: number[] = [];
-/** 大文字小文字を畳んだ本文。打鍵のたびに畳み直さないよう憶えておく。 */
+/** The case-folded text. Remembered so we do not refold on every keystroke. */
 let folded = "";
 
 /**
- * **畳むのは大文字小文字だけである。**全角と半角、ひらがなとカタカナは
- * 別の文字として扱う。理由は二つある。
+ * Only case is folded. Full-width vs half-width, and hiragana vs katakana, are
+ * treated as different characters. There are two reasons.
  *
- * 1. **位置がずれる。**`NFKC` のような正規化は文字数を変える（`ﾊﾞ` の 2 文字が
- *    `バ` の 1 文字になる）。畳んだ文字列で見つけた位置は元の本文の位置と
- *    一致しなくなり、**飛び先も強調も一つずつ狂う。**元に戻す対応表を持てば
- *    直せるが、それは検索一つに持たせる仕掛けとしては重すぎる（第4節の第二優先）
- * 2. **予測しにくくなる。**「カタカナで打ったのにひらがなに当たる」は、当たって
- *    嬉しい場面と、絞り込みたいのに絞り込めない場面が半々である。**賢くするほど、
- *    なぜその件数になったのかが説明できなくなる**
+ * 1. Offsets would shift. Normalisation such as `NFKC` changes the character count
+ *    (the 2 characters `ﾊﾞ` become the 1 character `バ`). An offset found in the
+ *    folded string would no longer correspond to an offset in the original text, and
+ *    both the jump target and the highlight would be off by one each time. Keeping a
+ *    mapping table back to the original would fix it, but that is far too heavy a
+ *    mechanism to attach to a single search feature (second priority in §4)
+ * 2. It would become harder to predict. "I typed katakana and it matched hiragana"
+ *    is half the time a welcome hit and half the time an obstacle when you are
+ *    trying to narrow down. The cleverer it gets, the less explicable the resulting
+ *    count becomes
  *
- * 大文字小文字だけは畳む。`Enter` と `enter` を別物として扱う理由が無く、
- * 英数字の綴りを正確に思い出せないことは日本語の文書でも普通に起きる。
+ * Case alone is folded. There is no reason to treat `Enter` and `enter` as different
+ * things, and failing to recall the exact spelling of alphanumerics happens
+ * routinely even in a Japanese document.
  */
 const fold = (s: string): string => s.toLowerCase();
 
 /**
- * 検索に使う「畳んだ本文」と「畳んだ語」を決める。
+ * Decide the "folded text" and "folded query" used for searching.
  *
- * **`toLowerCase` は稀に文字数を変える**（`İ` は `i̇` の 2 文字になる）。長さが
- * 変わると畳んだ側で見つけた位置が元の本文と対応しなくなるので、そのときだけ
- * **大文字小文字の区別を諦めて生のまま探す。**黙って一つ隣へ飛ぶより、
- * 当たらないほうが利用者に見える。
+ * `toLowerCase` occasionally changes the character count (`İ` becomes the 2
+ * characters `i̇`). When the length changes, offsets found on the folded side no
+ * longer correspond to the original text, so in that case only we give up
+ * case-insensitivity and search the raw strings. A miss is more visible to the user
+ * than silently jumping one position over.
  */
 function prepare(query: string): { hay: string; needle: string } {
   const text = options?.text ?? "";
@@ -101,23 +110,27 @@ function prepare(query: string): { hay: string; needle: string } {
 }
 
 /**
- * 本文から当たりを全部集める。
+ * Collect every hit in the text.
  *
- * **記法記号を落とさず、生の Markdown をそのまま探す。**`**強調**` を探すと
- * `**` にも当たり、`$x^2$` は綴りのまま当たる。それでもこちらを採るのは、
+ * Markup characters are not stripped; the raw Markdown is searched as-is. Searching
+ * for `**強調**` also hits the `**`, and `$x^2$` matches by its literal spelling. We
+ * still take this side because:
  *
- * - **編集モードで見えているのは、まさにこの文字列である。**両モードで同じキーが
- *   同じ意味を持つことが要件であり（第9-2節）、片方だけ別の文字列を探していたら
- *   件数が食い違う
- * - **行番号との対応が壊れない。**記法を落とした本文を別に組み立てると、その
- *   位置から元の行へ戻す対応表が要る。表がずれれば飛び先が狂い、**ずれても
- *   気付けない**（第5節の教訓と同じで、静かに間違うものを増やさない）
- * - **予測できる。**打った文字がファイルの中にあればそこに当たる、という規則は
- *   grep と同じで、説明も要らない（第4節の第二優先）
+ * - This exact string is what is visible in edit mode. It is a requirement that the
+ *   same key means the same thing in both modes (§9-2), and if one side searched a
+ *   different string the counts would disagree
+ * - The correspondence to line numbers does not break. Building a separate
+ *   markup-stripped text would require a mapping table from those offsets back to
+ *   the original lines. If the table drifts, the jump target is wrong — and the
+ *   drift goes unnoticed (same lesson as §5: do not add more things that fail
+ *   silently)
+ * - It is predictable. "If what you typed exists in the file, it matches there" is
+ *   the same rule as grep, and needs no explanation (second priority in §4)
  *
- * 失うのは、記法をまたぐ語に当たらないこと（`**強調**され` の「強調され」）だけで
- * ある。**画面上の綴りに合わせるほうが正しく見える場面はあるが、その正しさは
- * 対応表の正しさに乗っており、こちらのほうが壊れにくい。**
+ * All we lose is matching across markup boundaries (「強調され」 in `**強調**され`,
+ * i.e. a word that spans the closing markers). Matching the on-screen spelling does
+ * look more correct in some situations, but that correctness rides on the
+ * correctness of a mapping table, and this way is harder to break.
  */
 function search(query: string): FindMatch[] {
   const { hay, needle } = prepare(query);
@@ -129,7 +142,7 @@ function search(query: string): FindMatch[] {
   return found;
 }
 
-/** 位置から行番号（0 始まり）を引く。行頭の一覧を二分探索する。 */
+/** Derive a line number (0-based) from an offset. Binary search over the line-start table. */
 function lineOf(index: number): number {
   let lo = 0;
   let hi = lineStarts.length - 1;
@@ -157,13 +170,14 @@ export function close(): void {
   options = null;
   folded = "";
   lineStarts = [];
-  // **閉じても、最後に飛んだ場所に留まる。**探して着いた先が消えるなら、
-  // 探した意味が無い。ここでするのは強調を消すことと焦点を返すことだけである。
+  // Closing leaves you where you last jumped to. If the place you searched your way
+  // to disappeared, the search would have been pointless. All we do here is clear the
+  // highlight and return focus.
   done?.clear();
   done?.restore();
 }
 
-/** 開いたまま `Mod+F` をもう一度押されたとき。ブラウザと同じく、打ち直せる状態に戻す。 */
+/** When `Mod+F` is pressed again while already open. Like the browser, return to a state ready for retyping. */
 export function refocus(): void {
   input?.focus();
   input?.select();
@@ -187,15 +201,18 @@ export function open(opts: FindOptions): void {
   input.className = "gera-find-input";
   input.type = "text";
   input.placeholder = "文書内を検索";
-  // IME を通す。日本語を探すのが主用途なので、ここは必須である。変換中に走らせない
-  // 手当ては onKey ではなくこちら側にも要る（下の isComposing）。
+  // Let the IME through. Searching Japanese is the main use, so this is essential.
+  // The guard against running mid-composition is needed on this side too, not only
+  // in onKey (see isComposing below).
   input.addEventListener("input", (e) => {
-    // **変換中の未確定文字では検索しない。**「けんさく」と打っている途中の
-    // 「k」「け」「けん」で飛び回ると、確定する前に読んでいた場所を失う。
+    // Do not search on unconfirmed composition text. Jumping around on the "k",
+    // "け", "けん" of typing 「けんさく」 loses the place you were reading before
+    // you ever confirmed the word.
     if ((e as InputEvent).isComposing) return;
     update();
   });
-  // 変換が確定した瞬間に一度だけ走らせる。上で弾いたぶんをここで拾う。
+  // Run exactly once at the moment composition is confirmed. This picks up what was
+  // rejected above.
   input.addEventListener("compositionend", () => update());
 
   counter = document.createElement("span");
@@ -208,9 +225,10 @@ export function open(opts: FindOptions): void {
 }
 
 /**
- * 語が変わったので探し直す。**検索を始めた場所から後ろで最初の当たり**を選ぶ。
- * 先頭から選ぶと、長い文書の途中で呼んだときに毎回冒頭へ飛ばされる（見出し一覧が
- * 開いた瞬間の選択を現在地に合わせているのと同じ理由）。
+ * The query changed, so search again. Select the first hit at or after the place the
+ * search started from. Selecting from the top would throw you back to the beginning
+ * every time you invoked search partway through a long document (the same reason the
+ * outline aligns its initial selection with your current position).
  */
 function update(): void {
   if (!input) return;
@@ -220,29 +238,31 @@ function update(): void {
   render();
 }
 
-/** いま選んでいる当たりを見せ、件数を出す。 */
+/** Show the currently selected hit and display the count. */
 function render(): void {
   if (!options || !input || !counter) return;
-  // 飛んだ先を次の起点にする。**一字足したときに、いま見ている場所から探し直す**
-  // ためで、起点を開いた場所に固定すると、絞り込むたびに冒頭へ引き戻される。
+  // Make the place we jumped to the next starting point. This is so that adding one
+  // more character searches again from where you are now; pinning the start to where
+  // search was opened would drag you back to the top each time you narrowed down.
   anchor = matches[current]?.line ?? anchor;
 
   if (!input.value || !matches.length) {
-    // 語が空のときは何も言わない。**打つ前から「見つかりません」と出るのは、
-    // 利用者が何もしていないのに失敗を告げることになる。**
+    // Say nothing when the query is empty. Showing "not found" before anything has
+    // been typed announces a failure when the user has not done anything.
     counter.textContent = input.value ? "見つかりません" : "";
     counter.classList.toggle("gera-find-none", Boolean(input.value));
     options.clear();
     return;
   }
-  // **何件目か・全部で何件かを出す。**これが無いと「もっとあるのか、これで
-  // 最後か」が分からず、Enter を押し続けるほかなくなる。
+  // Show which hit this is and how many there are in total. Without it you cannot
+  // tell whether there are more or this is the last, and all you can do is keep
+  // pressing Enter.
   counter.textContent = `${current + 1} / ${matches.length}`;
   counter.classList.remove("gera-find-none");
   options.show(input.value, matches[current] as FindMatch);
 }
 
-/** 次（`step` が 1）か前（-1）の当たりへ。端では回す——一覧の `move` と同じ作法。 */
+/** To the next hit (`step` of 1) or the previous (-1). Wrap at the ends — same manners as the outline's `move`. */
 function move(step: number): void {
   if (!matches.length) return;
   current = (current + step + matches.length) % matches.length;
@@ -250,20 +270,20 @@ function move(step: number): void {
 }
 
 /**
- * 本文の側に焦点が移ったあとでも `Esc` で閉じられるようにする。
+ * Allow `Esc` to close even after focus has moved into the document.
  *
- * **入力欄は覆いを持たない**（本文を隠さないため）ので、利用者が本文を触った
- * 瞬間に焦点は出ていく。そのとき下の `onKey` は届かず、**閉じ方が無くなる。**
- * 焦点が入力欄にあるうちは `onKey` が先に止める（stopPropagation）ので、
- * ここが二重に走ることはない。
+ * The input field has no backdrop (so as not to hide the text), so focus leaves the
+ * moment the user touches the document. At that point the `onKey` below no longer
+ * fires, and there would be no way to close. While focus is in the input field
+ * `onKey` stops the event first (stopPropagation), so this never runs twice.
  */
 function onWindowKey(e: KeyboardEvent): void {
   if (e.key === "Escape" && !e.isComposing) close();
 }
 
 function onKey(e: KeyboardEvent): void {
-  // **変換中の Enter は IME のものである。**候補を確定している最中に次の当たりへ
-  // 飛んではならない（見出し一覧の onKey と同じ）。
+  // Enter during composition belongs to the IME. We must not jump to the next hit
+  // while a candidate is being confirmed (same as the outline's onKey).
   if (e.isComposing) return;
   switch (e.key) {
     case "Escape":
@@ -273,27 +293,28 @@ function onKey(e: KeyboardEvent): void {
       move(e.shiftKey ? -1 : 1);
       break;
     default:
-      // 打った文字はそのまま入力欄へ。**握り潰さない**ことで、Mod 付きのキーは
-      // window 側の受け口（main.ts）にそのまま届く。
+      // Typed characters go straight to the input field. By not swallowing them,
+      // keys with Mod reach the window-level handler (main.ts) untouched.
       return;
   }
   e.preventDefault();
   e.stopPropagation();
 }
 
-// ---------------------------------------------------------- 当たりの強調
+// ---------------------------------------------------------- Highlighting hits
 
 /**
- * 閲覧モードで、当たりに色を付けて飛ぶ。
+ * In view mode, colour the hit and jump to it.
  *
- * **本文の DOM を書き換えない**（CSS Custom Highlight API）。`<mark>` で包むと
- * `data-line` の対応（第6節）も `renderFragment` によるブロックの差し替え
- * （局所編集）も、包んだぶんだけ形が変わって壊れる。**強調は見た目の層だけで
- * 完結させる。**API が無い実装では強調だけを諦める——飛ぶことは成立するので、
- * 道具として死にはしない。
+ * The document DOM is not rewritten (CSS Custom Highlight API). Wrapping in `<mark>`
+ * would break both the `data-line` correspondence (§6) and the block replacement
+ * done by `renderFragment` (local editing), because the shape changes by exactly the
+ * wrapper. Highlighting is kept entirely within the presentation layer. Where the
+ * API is unavailable we give up only the highlight — jumping still works, so the
+ * tool does not die.
  *
- * **色を付けるのは、いま画面に入っているブロックだけである。**これは節約では
- * なく、**そうしないと壊れるからである**（下の `watch`）。
+ * Only blocks currently on screen get coloured. This is not an economy measure; it
+ * is because doing otherwise breaks (see `watch` below).
  */
 const ALL = "gera-find";
 const CURRENT = "gera-find-current";
@@ -301,15 +322,15 @@ const CURRENT = "gera-find-current";
 const highlights: HighlightRegistry | undefined =
   typeof CSS !== "undefined" && "highlights" in CSS ? CSS.highlights : undefined;
 
-/** 見出しの着地点と同じだけ上端から下げる（viewer.ts の MARGIN と同じ値）。 */
+/** Offset from the top edge, the same as a heading's landing point (same value as MARGIN in viewer.ts). */
 const MARGIN = 24;
 
-/** 当たりを含むブロックと、そこに属する当たりの添字（`matches` の中での位置）。 */
+/** Blocks containing hits, and the indices of the hits belonging to each (positions within `matches`). */
 let groups = new Map<HTMLElement, number[]>();
-/** そのうち、いま画面に入っているもの。**色を付けてよいのはここだけである。** */
+/** Of those, the ones currently on screen. These are the only ones we may colour. */
 let onScreen = new Set<HTMLElement>();
 let watching: IntersectionObserver | null = null;
-/** 飛んだ直後だけ、当たりが画面に入っているかを確かめて寄せ直す。 */
+/** Only right after a jump, check whether the hit is on screen and nudge it into view. */
 let wantNudge = false;
 let scrollerNow: HTMLElement | null = null;
 let queryNow = "";
@@ -325,7 +346,7 @@ export function clearInView(): void {
   highlights?.delete(CURRENT);
 }
 
-/** `lines`（各ブロックの開始行）から、その行を含むブロックの添字を引く。無ければ -1。 */
+/** From `lines` (each block's start line), find the index of the block containing that line. -1 if none. */
 function blockAt(lines: number[], line: number): number {
   if (!lines.length || (lines[0] ?? 0) > line) return -1;
   let lo = 0;
@@ -339,20 +360,22 @@ function blockAt(lines: number[], line: number): number {
 }
 
 /**
- * ブロック一つの中で、当たりの範囲を集める。
+ * Collect the ranges of hits within a single block.
  *
- * **文字の節（テキストノード）を直に読む。**`nodeValue` は
- * `content-visibility: auto` でまだ組まれていないブロックでも読めるので、
- * **描画の進み具合に依存しない**（`innerText` は依存する）。
+ * Text nodes are read directly. `nodeValue` is readable even in a block that
+ * `content-visibility: auto` has not laid out yet, so this does not depend on render
+ * progress (`innerText` does).
  *
- * 節をまたぐ当たりは拾えない——`**強調**` は `<strong>` で節が切れるので、
- * 「強調」には当たるが「強調され」には当たらない。**これは検索そのものの性質と
- * 揃っている**（上の `search` は記法記号を落とさない生の本文を探すので、
- * 「強調され」はそもそも当たりに数えない）。
+ * Hits that span node boundaries are not picked up — in `**強調**` the node is split
+ * by `<strong>`, so 「強調」 matches but 「強調され」 does not. This is consistent
+ * with the nature of the search itself (the `search` above looks at the raw text
+ * with markup characters intact, so 「強調され」 is not counted as a hit in the
+ * first place).
  */
 function rangesIn(block: HTMLElement, query: string): Range[] {
   const lower = fold(query);
-  // 畳んで長さが変わる綴りでは位置が対応しない。そのときは生のまま探す（prepare と同じ判断）。
+  // For spellings whose length changes when folded, offsets do not correspond. In
+  // that case search raw (the same judgement as prepare).
   const caseless = lower.length === query.length;
   const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
   const found: Range[] = [];
@@ -373,18 +396,20 @@ function rangesIn(block: HTMLElement, query: string): Range[] {
 }
 
 /**
- * いま画面に入っているブロックぶんの強調を作り直す。
+ * Rebuild the highlights for the blocks currently on screen.
  *
- * **画面外のブロックの範囲を混ぜてはならない。**実測（WebKitGTK 2.52、
- * 2026-09-03）——`content-visibility: auto` で中身を飛ばされたブロックの中に
- * 作った Range は、**そのブロック全体を覆う帯**として、しかも**画面の中の
- * 無関係なブロックの上に**塗られる。範囲そのものは正しい（`toString()` は
- * 「検索」を返す）ので、**位置を出す側が組まれていない中身を測れないため**である。
- * 見た目だけの問題では済まない——当たっていない段落が丸ごと色付くので、
- * **どこが当たりなのかが読めなくなる。**
+ * Ranges from off-screen blocks must not be mixed in. Measured (WebKitGTK 2.52,
+ * 2026-09-03): a Range created inside a block whose contents were skipped by
+ * `content-visibility: auto` is painted as a band covering that entire block — and
+ * painted on top of an unrelated block that is on screen. The range itself is
+ * correct (`toString()` returns 「検索」); the cause is that the side computing
+ * positions cannot measure contents that have not been laid out. It is not merely a
+ * cosmetic problem — whole paragraphs that did not match get coloured, so you can no
+ * longer read where the hits actually are.
  *
- * 画面に入っているブロックは必ず組まれているので、そこだけを塗れば起きない。
- * 出入りは IntersectionObserver で追う（viewer.ts の fillMath と同じ作法）。
+ * Blocks that are on screen are always laid out, so painting only those avoids it.
+ * Entry and exit are tracked with an IntersectionObserver (same manners as fillMath
+ * in viewer.ts).
  */
 function repaint(): void {
   if (!highlights) return;
@@ -401,11 +426,11 @@ function repaint(): void {
   highlights.set(ALL, all);
   if (target) {
     const one = new Highlight(target);
-    // 重なった部分は、選んでいる一件の色で塗る。
+    // Where they overlap, paint with the colour of the one selected hit.
     one.priority = 1;
     highlights.set(CURRENT, one);
   } else {
-    // 選んでいる一件が画面の外にあるなら、その色も消す（上と同じ理由）。
+    // If the selected hit is off screen, clear its colour too (same reason as above).
     highlights.delete(CURRENT);
   }
   if (wantNudge && target && scrollerNow) {
@@ -415,7 +440,7 @@ function repaint(): void {
 }
 
 /**
- * 当たりを含むブロックを見つけ、その出入りを監視する。語が変わったときだけ組み直す。
+ * Find the blocks containing hits and observe their entry and exit. Only rebuilt when the query changes.
  */
 function watch(scroller: HTMLElement, doc: HTMLElement, query: string): void {
   watching?.disconnect();
@@ -426,13 +451,13 @@ function watch(scroller: HTMLElement, doc: HTMLElement, query: string): void {
 
   const blocks: HTMLElement[] = [];
   const lines: number[] = [];
-  // **数えるのは `.gera-doc` の直下だけである。**content-visibility が働く単位も
-  // 行の対応もここに在る（viewer.ts）。
+  // Only the direct children of `.gera-doc` are counted. Both the unit that
+  // content-visibility acts on and the line correspondence live here (viewer.ts).
   for (const child of doc.children) {
     const el = child as HTMLElement;
-    // **包みには行が付いていないことがある。**表は `.gera-table` で包んであり、
-    // 行を持つのは中の `<table>` である。包みごと落とすと、**表の中の当たりが
-    // 一つも強調されない。**
+    // A wrapper may not carry a line itself. Tables are wrapped in `.gera-table`, and
+    // it is the inner `<table>` that has the line. Dropping the wrapper outright
+    // would mean not a single hit inside a table gets highlighted.
     const own = el.dataset.line ?? el.querySelector<HTMLElement>("[data-line]")?.dataset.line;
     const line = Number(own);
     if (own !== undefined && Number.isFinite(line)) {
@@ -441,7 +466,7 @@ function watch(scroller: HTMLElement, doc: HTMLElement, query: string): void {
     }
   }
 
-  // 当たりをブロックごとにまとめる。**行から引くので、画面外でも取りこぼさない。**
+  // Group the hits by block. Because we look them up by line, nothing is missed even off screen.
   for (let i = 0; i < matches.length; i++) {
     const at = blockAt(lines, matches[i]?.line ?? 0);
     const block = at < 0 ? undefined : blocks[at];
@@ -460,18 +485,18 @@ function watch(scroller: HTMLElement, doc: HTMLElement, query: string): void {
       }
       repaint();
     },
-    // **余白を取らない。**画面に入っているブロックだけが「組まれている」と
-    // 言い切れる範囲であり、先回りするとそこが崩れる（repaint の注記）。
+    // No margin. Blocks that are on screen are exactly the range we can assert is
+    // laid out; reaching ahead breaks that (see the note on repaint).
     { root: scroller },
   );
   for (const block of groups.keys()) watching.observe(block);
 }
 
 /**
- * 当たりそのものが画面に入っていなければ寄せる。
+ * If the hit itself is not on screen, nudge it into view.
  *
- * **ブロックの先頭へ寄せるだけでは足りない。**長い箇条書きやコードブロックでは、
- * ブロックの頭が上端に来ても当たりは画面の下にありうる。
+ * Scrolling to the top of the block is not enough. In long lists or code blocks, the
+ * head of the block can be at the top edge while the hit is still below the screen.
  */
 function nudge(scroller: HTMLElement, range: Range): void {
   const rect = range.getBoundingClientRect();
@@ -481,7 +506,7 @@ function nudge(scroller: HTMLElement, range: Range): void {
   scroller.scrollTop += rect.top - top - MARGIN;
 }
 
-/** 閲覧モードで当たりへ飛び、色を付ける。飛び先が未描画のブロックでも着く。 */
+/** Jump to the hit in view mode and colour it. It lands even if the target block is not yet rendered. */
 export function showInView(scroller: HTMLElement, query: string): void {
   const at = matches[current];
   if (!at) {
@@ -489,16 +514,17 @@ export function showInView(scroller: HTMLElement, query: string): void {
     return;
   }
   const doc = scroller.querySelector<HTMLElement>(".gera-doc");
-  // 語が変わったときだけ組み直す。次の当たりへ送るだけなら、監視はそのまま使える。
+  // Rebuild only when the query changed. Just advancing to the next hit can reuse the observer as-is.
   if (doc && (query !== queryNow || scroller !== scrollerNow)) watch(scroller, doc, query);
-  // 飛ぶのは viewer.ts に任せる。**未描画のブロックでも着く経路はそこにしかない**
-  // （content-visibility の推定を実寸に置き換えながら寄せ直す settle）。
+  // Leave the jumping to viewer.ts. That is the only path that lands even on an
+  // unrendered block (settle, which re-aligns while replacing content-visibility's
+  // estimates with real measurements).
   scrollToLine(scroller, at.line);
   wantNudge = true;
-  // **寄せ直しが済んでから塗り直す。**飛び先のブロックが画面に入ったことを
-  // 監視が知るのは次のフレームの描画手前なので、その後ろに回す（viewer.ts の
-  // settle と同じ形）。監視の側からも repaint は呼ばれるので、どちらが先でも
-  // 最後には同じ状態に落ち着く。
+  // Repaint only after the re-alignment is done. The observer learns that the target
+  // block entered the screen just before the next frame is painted, so we queue
+  // behind that (same shape as settle in viewer.ts). repaint is also called from the
+  // observer side, so whichever runs first, the end state is the same.
   requestAnimationFrame(() => {
     requestAnimationFrame(repaint);
   });

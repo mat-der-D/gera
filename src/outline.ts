@@ -1,47 +1,51 @@
 /**
- * 見出しへ飛ぶ（設計 第9-2節「探す」、第14節の実装順序 5）。
+ * Jump to a heading (see DESIGN.md §9-2 "Finding", and step 5 of the implementation
+ * order in §14).
  *
- * **本人側の痛みに直接効く一つ目の道具である**（第2節）——「知りたいことが
- * 書いてある場所を探すだけでも大変」。版面（友人側の痛み）とは別の要求であり、
- * ここで応えるのは**飛び先を選ばせること**だけである。
+ * This is the first tool that addresses the author's own pain directly (§2) — "just
+ * locating where the thing I want to know is written is hard work". That is a
+ * different requirement from the text block (the friend's pain), and all it answers
+ * here is letting you pick a jump target.
  *
- * **サイドバーではなく、呼んだときだけ本文の上に重ねる。**理由は三つある。
+ * Not a sidebar: it overlays the text only when summoned. There are three reasons.
  *
- * 1. **欲しいのは飛び先であって、地図ではない。**痛みは「どこに書いてあるか
- *    探す」であり、常に目次を見ていたいわけではない。用が済めば消えてよい
- * 2. **本文の幅を奪わない。**長い日本語を通しで読むための版面が本体であり
- *    （第9-1節）、行長は版面の質そのものである。横に居座る UI は、読んでいる
- *    間ずっとその質を削る
- * 3. **「出すかどうか」の設定が要らない。**サイドバーは開閉の状態を持ち、
- *    状態は設定になり、設定は覚えるべき概念になる（第4節の第二優先）。
- *    重ねる形なら、覚えるのは呼び出しのキー一つだけで済む
+ * 1. What you want is a jump target, not a map. The pain is "finding where something
+ *    is written", not wanting a table of contents in view at all times. Once it has
+ *    served its purpose it can disappear
+ * 2. It does not steal width from the text. The text block for reading long Japanese
+ *    end to end is the main thing (§9-1), and line length is the quality of that
+ *    block itself. UI parked at the side erodes that quality the whole time you read
+ * 3. No "show it or not" setting is needed. A sidebar has an open/closed state, state
+ *    becomes a setting, and a setting becomes a concept you must remember (second
+ *    priority in §4). With an overlay, the only thing to remember is the one key that
+ *    summons it
  *
- * **これは「常設 UI を置かない」（第9節）に反しない。**常設ではなく、呼んだ
- * ときだけ出て、飛んだら消える。画面に何かが居座ることはない。
+ * This does not violate "no permanent UI" (§9). It is not permanent: it appears only
+ * when summoned and vanishes once you jump. Nothing ever sits on the screen.
  *
- * このモジュールは main.ts から**動的に import される。**起動して閲覧するだけの
- * 経路——それが普通の使い方である（第1節）——では、一度も読み込まれない。
- * CSS をここで import しているのも同じ理由である（editor.ts と同じ形）。
+ * This module is imported dynamically from main.ts. On the path of merely launching
+ * and reading — which is the normal way it is used (§1) — it is never loaded once.
+ * The CSS is imported here for the same reason (same shape as editor.ts).
  */
 import "./outline.css";
 
-/** 一覧に並べる見出し一つ。viewer.ts が markdown-it のトークンから作る。 */
+/** One heading in the list. viewer.ts builds these from markdown-it tokens. */
 export interface OutlineHeading {
-  /** `#` の数（1〜6）。 */
+  /** Number of `#` (1 to 6). */
   level: number;
-  /** 記法記号を落とした見出しの本文。絞り込みの対象になる。 */
+  /** The heading text with markup characters stripped. This is what filtering matches against. */
   text: string;
-  /** 元ソースの行番号（0 始まり）。飛び先の指定に使う。 */
+  /** Line number in the source (0-based). Used to specify the jump target. */
   line: number;
 }
 
 export interface OutlineOptions {
   headings: OutlineHeading[];
-  /** いま画面の先頭に見えている行。**開いた瞬間の選択をここに合わせる。** */
+  /** The line currently visible at the top of the screen. The selection on open is aligned to this. */
   current: number;
-  /** 選ばれた見出しの行へ飛ぶ。閉じたあとに呼ばれる。 */
+  /** Jump to the line of the chosen heading. Called after closing. */
   jump: (line: number) => void;
-  /** 閉じたときに、元居た場所へ焦点を戻す。 */
+  /** On close, return focus to where it was. */
   restore: () => void;
 }
 
@@ -50,10 +54,10 @@ let options: OutlineOptions | null = null;
 let input: HTMLInputElement | null = null;
 let list: HTMLElement | null = null;
 
-/** いま一覧に出ている見出し（絞り込んだ後）と、その中で選んでいる位置。 */
+/** The headings currently listed (after filtering), and which one within them is selected. */
 let shown: OutlineHeading[] = [];
 let selected = 0;
-/** その文書で最も浅い見出しの階層。字下げはここからの差で数える。 */
+/** The shallowest heading level in that document. Indentation is counted as the difference from here. */
 let baseLevel = 1;
 
 export function isOpen(): boolean {
@@ -69,8 +73,9 @@ export function close(): void {
   shown = [];
   const restore = options?.restore;
   options = null;
-  // **閉じたら焦点を返す。**返さないと、消えた要素に焦点が残ったまま矢印キーが
-  // どこにも届かなくなり、利用者からは「操作を受け付けなくなった」ように見える。
+  // Return focus on close. Without it, focus stays on a removed element, the arrow
+  // keys reach nowhere, and to the user it looks as though input has stopped being
+  // accepted.
   restore?.();
 }
 
@@ -81,7 +86,8 @@ export function open(opts: OutlineOptions): void {
 
   root = document.createElement("div");
   root.className = "gera-outline";
-  // 覆いの何も無いところを押したら閉じる。**Esc を知らなくても抜けられること。**
+  // Clicking empty space on the backdrop closes it. You must be able to get out
+  // without knowing about Esc.
   root.addEventListener("mousedown", (e) => {
     if (e.target === root) close();
   });
@@ -94,7 +100,7 @@ export function open(opts: OutlineOptions): void {
   input.className = "gera-outline-input";
   input.type = "text";
   input.placeholder = "見出しを絞り込む";
-  // IME を通す。日本語の見出しを絞り込むのが主用途なので、ここは必須である。
+  // Let the IME through. Filtering Japanese headings is the main use, so this is essential.
   input.addEventListener("input", () => {
     selected = 0;
     render();
@@ -103,11 +109,11 @@ export function open(opts: OutlineOptions): void {
   list = document.createElement("div");
   list.className = "gera-outline-list";
   list.addEventListener("mousedown", (e) => {
-    // click ではなく mousedown で拾う。click を待つと、その前に覆いの mousedown が
-    // 走って先に閉じてしまう。
+    // Caught on mousedown, not click. Waiting for click would let the backdrop's
+    // mousedown run first and close it before us.
     const item = e.target instanceof Element ? e.target.closest(".gera-outline-item") : null;
     if (!(item instanceof HTMLElement)) return;
-    e.preventDefault(); // 入力欄から焦点を奪わせない
+    e.preventDefault(); // do not let focus be taken from the input field
     selected = Number(item.dataset.index);
     choose();
   });
@@ -116,8 +122,9 @@ export function open(opts: OutlineOptions): void {
   root.append(box);
   document.body.append(root);
 
-  // **開いた瞬間の選択は、いま読んでいる場所にする。**先頭に置くと、長い文書の
-  // 途中で呼んだときに現在地が分からず、毎回そこまで送り直すことになる。
+  // The selection on open is the place you are currently reading. Putting it at the
+  // top would leave you unable to tell where you are when you invoke it partway
+  // through a long document, and you would have to travel back there every time.
   selected = Math.max(
     0,
     opts.headings.reduce((at, h, i) => (h.line <= opts.current ? i : at), 0),
@@ -127,14 +134,15 @@ export function open(opts: OutlineOptions): void {
 }
 
 /**
- * 絞り込みは**大文字小文字を無視した部分一致**である。
+ * Filtering is a case-insensitive substring match.
  *
- * **あいまい一致（飛び飛びの文字を拾う方式）にしない。**日本語には語の切れ目が
- * 無く、見出しは漢字が詰まっているので、飛び飛びの一致を許すと**ほとんどの
- * 見出しがほとんどの入力に当たってしまう。**絞り込みの目的は候補を減らすことで
- * あり、順位付けで誤魔化すより、当たらないものを落とすほうが直接効く。
- * 部分一致なら**当たった場所をそのまま太字で示せる**（`.gera-outline-mark`）
- * という利点もある——なぜその行が残っているかが見えることは、それ自体が案内である。
+ * No fuzzy matching (the kind that picks up scattered characters). Japanese has no
+ * word boundaries and headings are dense with kanji, so allowing scattered matches
+ * means almost every heading matches almost every input. The purpose of filtering is
+ * to reduce the candidates, and dropping what does not match works more directly
+ * than papering over it with ranking. A substring match also has the advantage that
+ * the matched span can be shown in bold exactly where it is (`.gera-outline-mark`) —
+ * seeing why a row survived is itself guidance.
  */
 function match(text: string, query: string): number {
   return text.toLowerCase().indexOf(query);
@@ -159,7 +167,7 @@ function render(): void {
   const items = shown.map((h, i) => {
     const item = document.createElement("div");
     item.className = "gera-outline-item";
-    // 階層は字下げで示す（outline.css）。深さは 6 段までで頭打ちにする。
+    // Level is shown by indentation (outline.css). Depth is capped at 6 steps.
     item.dataset.depth = String(Math.min(5, Math.max(0, h.level - baseLevel)));
     item.dataset.index = String(i);
     const at = query ? match(h.text, query) : -1;
@@ -180,7 +188,8 @@ function render(): void {
 
 function move(step: number): void {
   if (!shown.length) return;
-  // 端で止めずに回す。長い文書では末尾の見出しへ行くのに ↑ 一回で済む。
+  // Wrap rather than stop at the ends. In a long document, one press of ↑ is enough
+  // to reach the last heading.
   selected = (selected + step + shown.length) % shown.length;
   render();
 }
@@ -189,15 +198,16 @@ function choose(): void {
   const heading = shown[selected];
   if (!heading || !options) return;
   const jump = options.jump;
-  // **先に閉じる。**飛び先の位置合わせ（viewer.ts の settle）は寸法を測るので、
-  // 覆いが載ったままだと測る対象が画面の外にあるかどうかを取り違えうる。
+  // Close first. Aligning the jump target (settle in viewer.ts) takes measurements,
+  // and with the backdrop still in place it could misjudge whether what it measures
+  // is off screen.
   close();
   jump(heading.line);
 }
 
 function onKey(e: KeyboardEvent): void {
-  // **変換中の ↑↓ と Enter は IME のものである。**候補を選んでいる最中に
-  // 一覧が動いたり閉じたりしてはならない。
+  // ↑↓ and Enter during composition belong to the IME. The list must not move or
+  // close while a candidate is being chosen.
   if (e.isComposing) return;
   switch (e.key) {
     case "Escape":
@@ -213,8 +223,8 @@ function onKey(e: KeyboardEvent): void {
       choose();
       break;
     default:
-      // 打った文字はそのまま入力欄へ。**握り潰さない**ことで、Mod 付きのキーは
-      // window 側の受け口（main.ts）にそのまま届く。
+      // Typed characters go straight to the input field. By not swallowing them,
+      // keys with Mod reach the window-level handler (main.ts) untouched.
       return;
   }
   e.preventDefault();

@@ -1,19 +1,22 @@
 /*!
- * gera のホスト側。設計 第7節。
+ * The host side of gera. See DESIGN.md §7.
  *
- * Rust に持たせるのはファイル入出力・ダイアログ・ウィンドウ状態の保存だけである。
- * 編集の論理はすべてフロント側にあり、ここに機能を足していくと
- * 「覚えるべき概念」が二箇所に散る（第3節）。増やさないために置き場を狭くしてある。
+ * Rust owns only file I/O, dialogs, and saving window state. All the editing
+ * logic lives on the front end, and piling features in here would scatter the
+ * "concepts you have to learn" across two places (§3). The surface is kept
+ * narrow so that it does not grow.
  *
- * フロントとの契約は `src/host.ts` が固定している。引数名（path / contents / session）は
- * そのまま受ける。Tauri は JS 側の camelCase を snake_case に読み替えるが、
- * いずれも単語一つなので変換は恒等である。
+ * `src/host.ts` pins down the contract with the front end. Argument names
+ * (path / contents / session) are taken as they are. Tauri rewrites camelCase on
+ * the JS side into snake_case, but each of these is a single word, so the
+ * conversion is the identity.
  *
- * **ダイアログはここで開く。**フロント側の `@tauri-apps/plugin-dialog` を使うと、
- * 選ばれたパスがフロントを経由して戻ってくるため、`Allowed` への登録も
- * フロントからの申告に頼ることになる。それでは webview が乗っ取られた時点で
- * 任意のパスを登録できてしまい、`Allowed` を置いた意味が消える（第7-4節 (a)）。
- * 選択と登録を Rust 側で閉じるために、ダイアログをこちら側へ移してある。
+ * Dialogs are opened here. Using the front end's `@tauri-apps/plugin-dialog`
+ * would send the chosen path back by way of the front end, which would make
+ * registration into `Allowed` depend on what the front end reports. That way,
+ * the moment the webview is taken over, an arbitrary path could be registered
+ * and `Allowed` would no longer mean anything (§7-4 (a)). The dialogs were moved
+ * to this side so that selecting and registering both stay closed inside Rust.
  */
 use std::collections::HashSet;
 use std::fs;
@@ -25,28 +28,32 @@ use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 
-/// 開くダイアログと保存ダイアログで見せる絞り込み。`src/host.ts` の FILTERS と同じ並びである。
+/// The filter shown in the open and save dialogs. Same order as FILTERS in `src/host.ts`.
 const FILTER_NAME: &str = "Markdown";
 const FILTER_EXTS: &[&str] = &["md", "markdown", "mdown", "txt"];
 
-/// **利用者が自分の手で指し示したパスの集合**（第7-4節 (a)）。
+/// The set of paths the user pointed at with their own hand (§7-4 (a)).
 ///
-/// 入るのは三つの経路だけである——コマンドライン引数、開くダイアログ、保存ダイアログ。
-/// いずれも Rust 側でパスが決まる経路であり、**フロントから登録する口は無い。**
-/// `read_file` / `write_file` はここに無いパスを拒む。
+/// Only three routes put anything in it — command line arguments, the open
+/// dialog, and the save dialog. In every one of them the path is decided on the
+/// Rust side, and there is no entry point for the front end to register one.
+/// `read_file` / `write_file` refuse any path that is not in here.
 ///
-/// 集合は起動のあいだだけ持つ。次の起動へ持ち越すと、そのファイルが以後ずっと
-/// 書き込み可能なままになり、絞った意味が薄れる。
+/// The set lives only for the duration of one run. Carrying it over to the next
+/// run would leave that file writable forever after, which would drain the point
+/// of narrowing it down.
 #[derive(Default)]
 struct Allowed(Mutex<HashSet<PathBuf>>);
 
 impl Allowed {
-    /// 正規化した形で入れ、**入れた形をそのまま返す。**フロントへ渡す文字列と
-    /// 集合の中身がずれると、直後の `read_file` が自分で登録したパスに弾かれる。
+    /// Insert the normalized form, and return exactly the form that was inserted.
+    /// If the string handed to the front end drifts from what is in the set, the
+    /// very next `read_file` will reject the path this call just registered.
     fn insert(&self, path: &Path) -> Result<PathBuf, String> {
         let normalized = normalize(path)?;
-        // Mutex が毒されるのは他のスレッドが保持中に panic した場合だけで、
-        // ここに置いてあるのは HashSet 一つである。壊れようがないので中身を取り出す。
+        // A Mutex is only poisoned when another thread panicked while holding it,
+        // and what is kept here is a single HashSet. It cannot be left broken, so
+        // just take the inner value.
         self.0
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -64,13 +71,15 @@ impl Allowed {
     }
 }
 
-/// パスを突き合わせられる形に直す。**`..` とシンボリックリンクによる回避を潰すため**に
-/// `fs::canonicalize` を通す（第7-4節 (a)）。相対パスもここで絶対パスになる。
+/// Put a path into a form that can be compared. It goes through
+/// `fs::canonicalize` in order to close off evasion via `..` and symbolic links
+/// (§7-4 (a)). Relative paths also become absolute here.
 ///
-/// **まだ存在しないファイルも扱えなければならない。**保存ダイアログで新しい名前を
-/// 入力した直後がそれで、その時点ではファイルが無いので canonicalize は失敗する。
-/// 親ディレクトリだけを canonicalize して名前を継ぎ足す——親は必ず存在するので、
-/// `..` とシンボリックリンクはここで解け、回避の余地は残らない。
+/// It has to handle files that do not exist yet. That is the case right after a
+/// new name is typed into the save dialog: at that moment there is no file, so
+/// canonicalize fails. So canonicalize only the parent directory and append the
+/// name — the parent always exists, so `..` and symbolic links are resolved here
+/// and no room for evasion is left.
 fn normalize(path: &Path) -> Result<PathBuf, String> {
     if let Ok(resolved) = fs::canonicalize(path) {
         return Ok(resolved);
@@ -78,7 +87,8 @@ fn normalize(path: &Path) -> Result<PathBuf, String> {
     let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
         return Err(format!("{} を解決できなかった", path.display()));
     };
-    // 親が空文字列になるのはカレントディレクトリ直下の相対パスのときだけである。
+    // The parent is only the empty string for a relative path directly under the
+    // current directory.
     let parent = if parent.as_os_str().is_empty() {
         Path::new(".")
     } else {
@@ -89,17 +99,19 @@ fn normalize(path: &Path) -> Result<PathBuf, String> {
     Ok(resolved.join(name))
 }
 
-/// 不可視の自動退避の中身（第11節）。フロントの `Session` と同じ形にしてある。
+/// The contents of the invisible automatic backup (§11). Shaped the same as
+/// `Session` on the front end.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Session {
     path: Option<String>,
     text: String,
 }
 
-/// 集合に無いパスは、読むことも書くこともさせない（第7-4節 (a)）。
+/// A path that is not in the set can be neither read nor written (§7-4 (a)).
 ///
-/// **拒否の文面に「許可されていない」以上のことを書かない。**存在するかどうかを
-/// 言い分けると、集合の外にあるファイルの有無を webview に教えることになる。
+/// The refusal message says nothing beyond "not allowed". Distinguishing whether
+/// the file exists would tell the webview about the presence or absence of files
+/// outside the set.
 fn require_allowed(allowed: &Allowed, path: &str) -> Result<(), String> {
     if allowed.contains(Path::new(path)) {
         return Ok(());
@@ -107,19 +119,24 @@ fn require_allowed(allowed: &Allowed, path: &str) -> Result<(), String> {
     Err(format!("{path} は開かれていないため触れない"))
 }
 
-/// 内容の指紋（第9-6節）。**外部からの書き換えを見つけるためだけに使う。**
+/// A digest of the contents (§9-6). Used for one thing only: spotting an
+/// external rewrite.
 ///
-/// **mtime ではなく内容で見る。**mtime は中身が同じでも動く——git の checkout や
-/// エディタの保存し直しで、一文字も変わっていないのに「書き換えられた」と言うことに
-/// なる。偽の知らせは、本物の知らせを信じさせなくする。
+/// It looks at the contents, not mtime. mtime moves even when the contents are
+/// identical — a git checkout or a re-save from another editor would make us
+/// claim "this was rewritten" when not one character changed. A false alarm
+/// teaches you not to believe the real one.
 ///
-/// **暗号学的なハッシュを使わない。**ここで守っているのは「利用者が気づかないうちに
-/// 他人の変更を消す」経路であって、攻撃者に対する防御ではない——ファイルを書ける
-/// 相手は、指紋を合わせるまでもなく好きに書ける。したがって衝突困難性は要らず、
-/// 偶然の衝突が実質起きなければ足りる。**新しい依存を足さない**理由でもある。
+/// It does not use a cryptographic hash. What is guarded here is the route where
+/// the user silently wipes out someone else's change, not a defence against an
+/// attacker — anyone who can write the file can write whatever they like without
+/// bothering to match a digest. So collision resistance is not needed; it is
+/// enough that accidental collisions effectively never happen. That is also the
+/// reason not to add a new dependency.
 ///
-/// FNV-1a に長さを添える。長さが違えば指紋は必ず違うので、
-/// 実際に取り違えが起きるのは「同じ長さで 64 ビットが衝突した」場合だけである。
+/// FNV-1a with the length attached. Different lengths always give different
+/// digests, so the only way to actually confuse two contents is a 64-bit
+/// collision at the same length.
 fn digest(bytes: &[u8]) -> String {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for &b in bytes {
@@ -129,13 +146,15 @@ fn digest(bytes: &[u8]) -> String {
     format!("{}-{hash:016x}", bytes.len())
 }
 
-/// いまディスクにある内容の指紋。**読み込んだときの指紋と突き合わせるために使う。**
+/// The digest of what is on disk right now. Used to compare against the digest
+/// taken at load time.
 ///
-/// **計算はここで行う。**212KB の本文をフロントへ運んで向こうで数えるのは、
-/// 指紋を得るためだけに IPC を一往復ぶん太らせることになる。
+/// The computation happens here. Carrying 212KB of text over to the front end and
+/// counting it there would fatten one IPC round trip just to obtain a digest.
 ///
-/// 読めなければ Err である。消された・権限が変わったといった事情は、
-/// 「書き換えられた」とは別のことなので、呼び出し側で言い分けられるようにしておく。
+/// If it cannot be read, that is an Err. Circumstances like the file being
+/// deleted or its permissions changing are a different matter from "it was
+/// rewritten", so the caller is left able to tell them apart.
 #[tauri::command]
 fn file_digest(allowed: State<'_, Allowed>, path: String) -> Result<String, String> {
     require_allowed(&allowed, &path)?;
@@ -143,11 +162,13 @@ fn file_digest(allowed: State<'_, Allowed>, path: String) -> Result<String, Stri
     Ok(digest(&bytes))
 }
 
-/// 読んだ本文と、そのときの指紋。
+/// The text that was read, and the digest at that moment.
 ///
-/// **指紋を別の口にせず、読んだら必ず一緒に返す。**別の口にすると、読んだのに
-/// 指紋を取り損ねた状態が作れてしまい、その状態からの保存は突き合わせる相手を
-/// 持たない——つまり黙って上書きする（第9-6節）。**型で起こらなくしておく。**
+/// The digest does not get its own entry point; reading always returns it
+/// alongside. A separate entry point would make it possible to be in a state
+/// where the file was read but the digest was not taken, and a save from that
+/// state has nothing to compare against — that is, it silently overwrites
+/// (§9-6). The type makes that state impossible.
 #[derive(Debug, Serialize)]
 struct FileContents {
     text: String,
@@ -163,12 +184,13 @@ fn read_file(allowed: State<'_, Allowed>, path: String) -> Result<FileContents, 
     Ok(FileContents { text, digest })
 }
 
-/// 書き込みの結果（第9-6節）。
+/// The result of a write (§9-6).
 ///
-/// **食い違いを Err にしない。**Err は「保存という操作が失敗した」ことを表す形で、
-/// フロント側では他の失敗と同じ扱いになる。ここで起きているのは失敗ではなく
-/// **予定どおりの拒否**であり、利用者へ見せるものも違う（出口の案内）。
-/// 文字列を読み分けさせるのではなく、型で分ける。
+/// A mismatch is not an Err. Err is the shape that means "the save operation
+/// failed", and the front end treats it like any other failure. What happens
+/// here is not a failure but a refusal exactly as planned, and what the user is
+/// shown differs too (the guidance to the ways out). Rather than making the
+/// caller parse strings apart, the type separates them.
 #[derive(Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum Written {
@@ -176,16 +198,18 @@ enum Written {
     Conflict,
 }
 
-/// 書き込み。`expect` があれば、**書く直前に**ディスクの内容と突き合わせる（第9-6節）。
+/// Writing. If `expect` is given, compare against the contents on disk
+/// immediately before writing (§9-6).
 ///
-/// **突き合わせをここで行うのは、読んで比べて書くまでを一続きにするためである。**
-/// フロント側で「指紋を訊く」「書く」と二回に分けると、その隙間に書き換えられた
-/// ぶんを取りこぼす。
+/// The comparison happens here so that read, compare, and write form one
+/// unbroken stretch. Splitting it on the front end into "ask for the digest" and
+/// "write" would drop whatever was rewritten in the gap between the two.
 ///
-/// `expect` が `None` のときは突き合わせない。これは**別名保存**（第9-6節の
-/// 三つの出口）が通る道である——食い違っているときの唯一の出口なので、
-/// ここを塞ぐと逃げ場が無くなる。同じ名前を選び直した場合に上書きしてよいかは、
-/// OS の保存ダイアログが「置き換えますか」と訊いて既に決着している。
+/// When `expect` is `None`, nothing is compared. This is the path taken by
+/// save-as (one of the three ways out in §9-6) — it is the only way out when
+/// there is a mismatch, so blocking it here would leave nowhere to escape to.
+/// Whether overwriting is acceptable when the same name is chosen again has
+/// already been settled by the OS save dialog asking "replace it?".
 #[tauri::command]
 fn write_file(
     allowed: State<'_, Allowed>,
@@ -195,24 +219,28 @@ fn write_file(
 ) -> Result<Written, String> {
     require_allowed(&allowed, &path)?;
     if let Some(expect) = expect {
-        // 読めないときは食い違い扱いにする。**消されている・権限が変わっている
-        // のに黙って作り直すと、消したという相手の操作を取り消すことになる。**
+        // Treat an unreadable file as a mismatch. Silently recreating a file that
+        // was deleted, or whose permissions changed, would undo the other party's
+        // act of deleting it.
         let current = fs::read(&path).map(|bytes| digest(&bytes)).ok();
         if current.as_deref() != Some(expect.as_str()) {
             return Ok(Written::Conflict);
         }
     }
     fs::write(&path, &contents).map_err(|e| format!("{path} に書けなかった: {e}"))?;
-    // **書いた内容の指紋を返す。**次の保存でこれを基準にすれば、自分の書き込みを
-    // 外部からの書き換えと取り違えない（第9-6節）。
+    // Return the digest of what was written. Using it as the baseline for the
+    // next save keeps our own write from being mistaken for an external
+    // rewrite (§9-6).
     Ok(Written::Saved { digest: digest(contents.as_bytes()) })
 }
 
-/// 開くダイアログ。選ばれたパスを**この中で**集合に入れてからフロントへ返す。
+/// The open dialog. The chosen path is put into the set inside this function
+/// before being returned to the front end.
 ///
-/// `async fn` にして中身を `spawn_blocking` に置くのは、`blocking_pick_file` が
-/// 呼んだスレッドを止めるからである。非同期コマンドは Tauri のイベントループと
-/// 同じスレッドで走ることがあり、そこで止めると窓ごと固まる。
+/// It is an `async fn` with the body in `spawn_blocking` because
+/// `blocking_pick_file` blocks the thread that calls it. An async command can run
+/// on the same thread as Tauri's event loop, and blocking there freezes the whole
+/// window.
 #[tauri::command]
 async fn pick_file_to_open(app: AppHandle) -> Result<Option<String>, String> {
     let handle = app.clone();
@@ -225,15 +253,16 @@ async fn pick_file_to_open(app: AppHandle) -> Result<Option<String>, String> {
     .await
     .map_err(|e| format!("ダイアログを開けなかった: {e}"))?;
 
-    // 取り消しは失敗ではない。
+    // Cancelling is not a failure.
     let Some(picked) = picked else {
         return Ok(None);
     };
     finish_pick(&handle, &picked)
 }
 
-/// 保存ダイアログ。`current` は初期表示に使うだけで、**集合には入れない。**
-/// フロントから来た文字列を根拠に許可を出さない、という一点がこの仕組みの要である。
+/// The save dialog. `current` is used only for the initial display and is not
+/// put into the set. The one thing this mechanism turns on is that no permission
+/// is granted on the strength of a string that came from the front end.
 #[tauri::command]
 async fn pick_path_to_save(
     app: AppHandle,
@@ -264,15 +293,18 @@ async fn pick_path_to_save(
     finish_pick(&handle, &picked)
 }
 
-/// ダイアログが返した行き先を集合へ入れ、フロントへ渡す文字列にする。
+/// Put the destination the dialog returned into the set, and turn it into the
+/// string handed to the front end.
 ///
-/// **登録した形をそのまま文字列にする。**`normalize` を通した結果を返さないと、
-/// フロントが持つ文字列と集合の中身が食い違い、直後の読み書きが弾かれる。
+/// The string is exactly the registered form. Returning anything other than the
+/// result of `normalize` would make the string the front end holds disagree with
+/// the contents of the set, and the very next read or write would be rejected.
 fn finish_pick(
     app: &AppHandle,
     picked: &tauri_plugin_dialog::FilePath,
 ) -> Result<Option<String>, String> {
-    // Url の変種になるのは Android の content:// だけで、デスクトップでは来ない。
+    // The Url variant only occurs for Android's content://; it never arrives on
+    // the desktop.
     let path = picked
         .clone()
         .into_path()
@@ -281,12 +313,14 @@ fn finish_pick(
     Ok(Some(registered.to_string_lossy().into_owned()))
 }
 
-/// 起動時のコマンドライン引数（第9-5節）を、フロントが取りに来るための口。
+/// The entry point through which the front end comes to fetch the command line
+/// arguments given at startup (§9-5).
 ///
-/// **`path` と `error` を両方返す。**引数が壊れていたときに黙って退避へ落ちると、
-/// 利用者は「開いたつもりのファイルではないもの」を見ることになる。かといって
-/// Err だけを返すと、フロント側が退避からの復元へ進む道を失う。両方渡して、
-/// 復元は進めつつ理由は伝える形にする。
+/// Both `path` and `error` are returned. Silently falling back to the backup when
+/// the argument is broken would leave the user looking at something other than
+/// the file they thought they had opened. Returning only an Err, on the other
+/// hand, would take away the front end's route to restoring from the backup.
+/// Handing over both lets restoration proceed while still reporting the reason.
 #[derive(Debug, Default, Serialize)]
 struct Startup {
     path: Option<String>,
@@ -301,15 +335,17 @@ fn initial_path(startup: State<'_, Startup>) -> Startup {
     }
 }
 
-/// `http` と `https` だけを OS へ渡す（第7-4節 (d)）。
+/// Hand only `http` and `https` to the OS (§7-4 (d)).
 ///
-/// **検証をフロントに置かない。**webview が乗っ取られれば、フロント側の検査は
-/// 呼ばれずに `invoke` だけが飛んでくる。`file:` や独自スキームを OS に渡すと、
-/// 既定のアプリケーションが何であれ起動できてしまう。
+/// The validation is not placed on the front end. If the webview is taken over,
+/// the front-end check is never called and only the `invoke` arrives. Handing
+/// `file:` or a custom scheme to the OS would let whatever the default
+/// application is be launched.
 #[tauri::command]
 fn open_external(app: AppHandle, url: String) -> Result<(), String> {
-    // スキームの後ろに制御文字や空白が混ざったものを、後段が別のものとして
-    // 読み直す余地を残さない。ASCII の可視文字だけを通す。
+    // Leave no room for a later stage to reinterpret a URL with control
+    // characters or whitespace mixed in after the scheme as something else. Only
+    // printable ASCII gets through.
     if url.is_empty() || url.bytes().any(|b| !(0x21..=0x7e).contains(&b)) {
         return Err(format!("この URL は渡せない: {url}"));
     }
@@ -322,7 +358,8 @@ fn open_external(app: AppHandle, url: String) -> Result<(), String> {
         .map_err(|e| format!("{url} を開けなかった: {e}"))
 }
 
-/// 退避ファイルの置き場。アプリ専用領域に置き、利用者からは見えないところに置く（第11節）。
+/// Where the backup file lives. It goes in the app-private area, somewhere the
+/// user does not see (§11).
 fn session_path(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app
         .path()
@@ -331,11 +368,12 @@ fn session_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir.join("session.json"))
 }
 
-/// 退避の読み出し。
+/// Reading the backup.
 ///
-/// **失敗しても Err を返さない。**退避が壊れていることと、アプリが起動できないことは
-/// 別の話であり、後者を前者に引きずられて起こすのは本末転倒である。
-/// 読めない・壊れている場合は「退避が無かった」ものとして扱う。
+/// A failure does not return an Err. The backup being corrupted and the app being
+/// unable to start are separate matters, and letting the former drag the latter
+/// along would defeat the purpose. If it cannot be read, or is corrupted, it is
+/// treated as though there were no backup.
 #[tauri::command]
 fn load_session(app: AppHandle) -> Result<Option<Session>, String> {
     let Ok(path) = session_path(&app) else {
@@ -357,13 +395,15 @@ fn save_session(app: AppHandle, session: Session) -> Result<(), String> {
     fs::write(&path, raw).map_err(|e| format!("退避を書けなかった: {e}"))
 }
 
-/// 利用者 CSS の置き場（第9-4節、第14節の実装順序 7）。
+/// Where the user CSS lives (§9-4, and step 7 of the implementation order in
+/// §14).
 ///
-/// **引数を取らない。**`read_file` は「利用者が自分の手で指し示したパスだけ」を
-/// 受ける仕組み（第7-4節 (a)）であり、`user.css` はその集合に入らない。かといって
-/// 集合に入れてしまうと、利用者が指していないパスが許可済みになる。**だから
-/// 専用の口を作り、その口は決め打ちの一箇所しか読まない**——フロントから
-/// パスを渡せない以上、この口を乗っ取っても読める先は増えない。
+/// It takes no arguments. `read_file` is a mechanism that accepts only paths the
+/// user pointed at with their own hand (§7-4 (a)), and `user.css` is not in that
+/// set. Putting it into the set, though, would mark a path the user never pointed
+/// at as allowed. So there is a dedicated entry point, and that entry point reads
+/// exactly one hard-coded location — since no path can be passed from the front
+/// end, taking over this entry point adds nothing to what can be read.
 fn user_css_path(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app
         .path()
@@ -372,21 +412,23 @@ fn user_css_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir.join("user.css"))
 }
 
-/// 利用者 CSS の中身と、その置き場。
+/// The contents of the user CSS, and where it lives.
 ///
-/// **`path` を必ず返す。**設定画面を作らない（第9-4節）以上、「どこに置けばよいか」を
-/// 利用者へ伝える手段が他に無い。読み直しの通知に出す。
+/// `path` is always returned. Given that there is no settings screen (§9-4),
+/// there is no other way to tell the user where to put the file. It is shown in
+/// the reload notification.
 #[derive(Debug, Serialize)]
 struct UserCss {
     path: String,
     css: Option<String>,
 }
 
-/// 利用者 CSS を読む。**無いことは失敗ではない。**
+/// Read the user CSS. Its absence is not a failure.
 ///
-/// ほとんどの起動でこのファイルは存在しない。存在しないことを Err にすると、
-/// 起動のたびに帯が出るか、フロント側で「この失敗だけは無視する」判定を
-/// 書くことになる。**「無い」と「読めなかった」を型で分ける**（`css: None` と Err）。
+/// On most runs this file does not exist. Making its absence an Err would mean
+/// either a banner on every startup, or a front-end test that says "ignore this
+/// one failure". "Not there" and "could not be read" are separated by the type
+/// (`css: None` versus Err).
 #[tauri::command]
 fn read_user_css(app: AppHandle) -> Result<UserCss, String> {
     let path = user_css_path(&app)?;
@@ -400,22 +442,24 @@ fn read_user_css(app: AppHandle) -> Result<UserCss, String> {
     }
 }
 
-/// 起動している IME デーモンを `/proc/*/comm` から見て、GTK のモジュール名を決める。
+/// Determine the GTK module name by looking at the running IME daemon through
+/// `/proc/*/comm`.
 ///
-/// デスクトップ環境ごとの設定ファイルを読みに行くより、
-/// **いま実際に動いているもの**を見るほうが外れない。
+/// Looking at what is actually running right now misses less often than going and
+/// reading each desktop environment's own configuration file.
 #[cfg(target_os = "linux")]
 fn running_im_module() -> Option<&'static str> {
     let entries = fs::read_dir("/proc").ok()?;
     let mut found_fcitx = false;
     for entry in entries.flatten() {
-        // /proc の下には PID 以外のエントリも並ぶ。comm が読めなければ黙って飛ばす。
+        // Entries other than PIDs also sit under /proc. If comm cannot be read,
+        // skip it silently.
         let Ok(comm) = fs::read_to_string(entry.path().join("comm")) else {
             continue;
         };
         match comm.trim() {
-            // ibus が居れば即決する。fcitx と併走している場合でも
-            // XMODIFIERS を持っているのは通常 ibus 側である。
+            // If ibus is present, decide immediately. Even when it runs
+            // alongside fcitx, the one holding XMODIFIERS is normally ibus.
             "ibus-daemon" => return Some("ibus"),
             "fcitx5" | "fcitx" => found_fcitx = true,
             _ => {}
@@ -424,17 +468,21 @@ fn running_im_module() -> Option<&'static str> {
     found_fcitx.then_some("fcitx")
 }
 
-/// Linux で GTK の入力メソッドを明示する。**GTK の初期化前に呼ぶこと。**
+/// State the GTK input method explicitly on Linux. Call this before GTK is
+/// initialised.
 ///
-/// 変換中の未確定文字の下線がずれる現象が実測されており、原因は
-/// `GTK_IM_MODULE` が空だったことにある。値を入れれば直る。
+/// A misaligned underline under uncommitted characters during conversion has been
+/// measured, and the cause is that `GTK_IM_MODULE` was empty. Setting a value
+/// fixes it.
 ///
-/// これは WebKitGTK の bug 218148（変換候補窓が画面の隅に出る）とは**別の問題**である。
-/// 218148 は WebKitGTK 側の欠陥で、こちらでは直せないため代償として受け入れている
-/// （設計 第6節）。ここで直せるのは環境変数側の問題だけである。
+/// This is a separate problem from WebKitGTK bug 218148 (the conversion candidate
+/// window appearing in a corner of the screen). 218148 is a defect on the
+/// WebKitGTK side that cannot be fixed here, so it is accepted as a cost (see
+/// DESIGN.md §6). What can be fixed here is only the environment variable side of
+/// the problem.
 ///
-/// 既に値が入っているときは触らない。利用者が意図して設定した値を、
-/// アプリが起動のたびに書き換えてよい理由はない。
+/// If a value is already set, leave it alone. There is no reason for the app to
+/// rewrite, on every startup, a value the user deliberately configured.
 #[cfg(target_os = "linux")]
 fn setup_ime_env() {
     let already_set = |key: &str| std::env::var(key).is_ok_and(|v| !v.is_empty());
@@ -451,32 +499,37 @@ fn setup_ime_env() {
     }
 }
 
-/// コマンドライン引数から、開くべきファイルを一つ選ぶ（第9-5節）。
+/// Pick the one file to open out of the command line arguments (§9-5).
 ///
-/// **見るのは最初の一つだけである。**gera はタブを持たない（第10節）ので、
-/// 二つ以上渡されても開ける先が無い。二つ目以降は黙って捨てる。
+/// Only the first one is looked at. gera has no tabs (§10), so even if two or
+/// more are passed there is nowhere to open them. Everything from the second on
+/// is silently discarded.
 ///
-/// `-` で始まるものは飛ばす。Windows のファイル関連付けから来る引数は素のパスだが、
-/// webview の実装（WebKitGTK など）が自分向けの旗を混ぜて渡してくる場合がある。
+/// Anything starting with `-` is skipped. Arguments coming from a Windows file
+/// association are bare paths, but a webview implementation (WebKitGTK and the
+/// like) may mix in flags meant for itself.
 fn file_from_args() -> Option<String> {
     std::env::args()
         .skip(1)
         .find(|arg| !arg.starts_with('-'))
 }
 
-/// 引数で渡されたファイルを検分し、開いてよければ集合に入れる。
+/// Inspect the file passed as an argument and, if it is fine to open, put it
+/// into the set.
 ///
-/// **どの失敗でも起動は止めない。**引数が壊れていることと、gera が立ち上がらない
-/// ことは別の話であり、退避の読み出し（`load_session`）と同じ扱いにする。
-/// ただし黙りもしない——理由を `Startup::error` に載せてフロントへ渡す。
+/// No failure stops startup. The argument being broken and gera failing to come
+/// up are separate matters, and this is treated the same way as reading the
+/// backup (`load_session`). It does not stay silent either — the reason is put on
+/// `Startup::error` and handed to the front end.
 fn resolve_startup(allowed: &Allowed) -> Startup {
     let Some(arg) = file_from_args() else {
         return Startup::default();
     };
     let path = PathBuf::from(&arg);
 
-    // 存在しない・ディレクトリ・読めない、を**開く前に**分けて言う。
-    // 開いてから失敗させると、フロントには一様な「読めなかった」しか届かない。
+    // Say "does not exist", "is a directory", and "cannot be read" separately,
+    // before opening. Failing after opening would deliver nothing but a uniform
+    // "could not be read" to the front end.
     let error = match fs::metadata(&path) {
         Err(e) => Some(format!("{arg} を開けません: {e}")),
         Ok(meta) if meta.is_dir() => Some(format!("{arg} はディレクトリです")),
@@ -489,7 +542,8 @@ fn resolve_startup(allowed: &Allowed) -> Startup {
         return Startup { path: None, error: Some(error) };
     }
 
-    // ここで初めて集合に入れる。**読めることを確かめたものだけを許可する。**
+    // Only now does it go into the set. Only what has been confirmed readable is
+    // allowed.
     match allowed.insert(&path) {
         Ok(registered) => Startup {
             path: Some(registered.to_string_lossy().into_owned()),
@@ -501,8 +555,9 @@ fn resolve_startup(allowed: &Allowed) -> Startup {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // tauri::Builder に触れる前に置く。GTK は初期化時に一度だけ環境変数を読むため、
-    // Builder を組んだあとでは間に合わない。
+    // Placed before tauri::Builder is touched. GTK reads the environment
+    // variables exactly once at initialisation, so after the Builder is assembled
+    // it is too late.
     #[cfg(target_os = "linux")]
     setup_ime_env();
 
@@ -515,8 +570,9 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
-        // ウィンドウ位置とサイズの保存はプラグインに任せる。
-        // 自前で持つと、保存の契機と復元の順序をこちらで正しく扱う必要が出る。
+        // Leave saving the window position and size to the plugin. Doing it
+        // ourselves would mean getting the save trigger and the restore ordering
+        // right on this side.
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .invoke_handler(tauri::generate_handler![
             read_file,

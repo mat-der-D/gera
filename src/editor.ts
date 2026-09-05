@@ -1,11 +1,12 @@
 /**
- * 編集モード（設計 第4節）。
+ * Edit mode (see DESIGN.md §4).
  *
- * 記号を残したまま装飾のみを当てる。見出しは大きく、太字は太く、引用には縦線を引く。
- * 表や画像は描画せず、Markdown の記法のまま扱う。
+ * The markers are left in place and only styling is applied: headings get larger,
+ * bold gets bolder, quotes get a vertical rule. Tables and images are not rendered;
+ * they are kept as Markdown notation.
  *
- * 実装順序 1 の段階では記号を常に表示する。
- * カーソル行だけ生に戻す規則（第6節）は実装順序 3 で入れる。
+ * At implementation step 1 the markers are always shown. The rule that reverts only
+ * the cursor's line to raw text (§6) comes in at implementation step 3.
  */
 import {
   Decoration,
@@ -25,7 +26,7 @@ import { GFM } from "@lezer/markdown";
 import { syntaxTree } from "@codemirror/language";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 
-/** 行そのものに当てる装飾。ブロック要素に対応する。 */
+/** Decorations applied to the line itself. These correspond to block elements. */
 const LINE_CLASSES: Record<string, string> = {
   ATXHeading1: "tok-h1",
   ATXHeading2: "tok-h2",
@@ -42,8 +43,9 @@ const LINE_CLASSES: Record<string, string> = {
 };
 
 /**
- * 範囲に当てる装飾。
- * tok-syntax は記法記号そのもの。消さずに薄くする（第4節「記号を残したまま」）。
+ * Decorations applied to a range.
+ * tok-syntax is the notation markers themselves. They are dimmed, not removed
+ * (§4, 「記号を残したまま」 — "with the markers left in place").
  */
 const MARK_CLASSES: Record<string, string> = {
   HeaderMark: "tok-syntax",
@@ -75,7 +77,8 @@ function buildDecorations(view: EditorView): DecorationSet {
   const seen = new Set<string>();
   const { doc } = view.state;
 
-  // 画面に見えている範囲だけを走る。文書の長さは走査コストに影響しない（第7節）。
+  // Walk only the ranges visible on screen. The length of the document does not
+  // affect the cost of the walk (§7).
   for (const { from, to } of view.visibleRanges) {
     syntaxTree(view.state).iterate({
       from,
@@ -84,7 +87,8 @@ function buildDecorations(view: EditorView): DecorationSet {
         const lineDeco = LINE_DECOS.get(node.name);
         if (lineDeco) {
           const first = doc.lineAt(node.from).number;
-          // node.to は次の行頭に来ることがあるため、1 引いてから行を引く。
+          // node.to can land at the start of the next line, so subtract 1 before
+          // looking up the line.
           const last = doc.lineAt(Math.max(node.from, node.to - 1)).number;
           for (let n = first; n <= last; n++) {
             const key = `${n} ${node.name}`;
@@ -100,7 +104,7 @@ function buildDecorations(view: EditorView): DecorationSet {
     });
   }
 
-  // 入れ子と重なりがあるため、RangeSetBuilder ではなく sort 付きの set を使う。
+  // Ranges nest and overlap, so use a sorting set rather than RangeSetBuilder.
   return Decoration.set(ranges, true);
 }
 
@@ -111,7 +115,8 @@ const decorations = ViewPlugin.fromClass(
       this.decorations = buildDecorations(view);
     }
     update(update: ViewUpdate) {
-      // Lezer は構文木を非同期に伸ばすため、木の入れ替わりも再構築の契機に含める。
+      // Lezer extends the syntax tree asynchronously, so a swap of the tree also
+      // counts as a trigger for rebuilding.
       if (
         update.docChanged ||
         update.viewportChanged ||
@@ -129,8 +134,9 @@ const theme = EditorView.theme({
   "&.cm-focused": { outline: "none" },
   ".cm-scroller": { fontFamily: "var(--font-sans)", lineHeight: "1.9", overflowY: "auto" },
 
-  // 本文以外の常設 UI を持たない（第5節）ので、余白がそのまま画面構成になる。
-  // 末尾の大きな余白は、最終行を画面の中ほどまで送れるようにするためのもの。
+  // There is no permanent UI other than the text (§5), so the padding is itself the
+  // composition of the screen. The large padding at the end is there so the last
+  // line can be scrolled up to the middle of the screen.
   ".cm-content": {
     maxWidth: "42em",
     margin: "0 auto",
@@ -155,7 +161,7 @@ const theme = EditorView.theme({
   },
   ".tok-hr": { color: "var(--dim)" },
 
-  // 記法記号は消さない。薄くするだけ（第4節）。
+  // Notation markers are never removed, only dimmed (§4).
   ".tok-syntax": { color: "var(--dim)", fontWeight: "400" },
   ".tok-listmark": { color: "var(--accent)" },
   ".tok-strong": { fontWeight: "700" },
@@ -198,7 +204,8 @@ export function createEditor(
   });
 }
 
-/** 文書全体を差し替える。ファイルを開いたときと、退避から復帰したときに使う。 */
+/** Replaces the whole document. Used when a file is opened and when restoring from
+ * the auto-saved session. */
 export function replaceDoc(view: EditorView, text: string): void {
   view.dispatch({
     changes: { from: 0, to: view.state.doc.length, insert: text },

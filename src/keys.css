@@ -1,36 +1,40 @@
-/* キー操作の一覧の見た目（設計 第9節）。
-   keys.ts からのみ import される。**`F1` を押すか、空の文書で始まるまで
-   読み込まれない**ので、起動時の費用にならない（第4節の第一優先）。
+/* The look of the key list (see DESIGN.md §9).
+   Imported only from keys.ts. It is not loaded until `F1` is pressed or the app
+   starts on an empty document, so it costs nothing at launch (the first priority
+   in §4).
 
-   **ここに現れるクラス名は公開 API である**（第9-4節）。利用者が自分の CSS で
-   見た目を変えられることが要件なので、名前を変えるときは docs/CSS.md も直すこと。
-   （`.gera-keys-tip` だけは style.css にある——画面の左上に常に出るものなので、
-   このファイルの読み込みを待てない。）
+   The class names appearing here are public API (§9-4). Letting users change the
+   look from their own CSS is a requirement, so if a name changes, docs/CSS.md must
+   change with it. (Only `.gera-keys-tip` lives in style.css — it is always present
+   at the top left of the screen, so it cannot wait for this file to load.)
 
-   **寸法はすべて rem で書く。**`--font-scale`（`Mod +/-`）が動かすのは**版面**——
-   読んでいる本文の大きさ——であって、道具の大きさではない（outline.css と同じ理由）。
+   All dimensions are written in rem. What `--font-scale` (`Mod +/-`) moves is the
+   text block — the size of the prose being read — not the size of the tools (the
+   same reason as outline.css).
 
-   **色は style.css の変数だけで作る。**ダークモードは変数の側で切り替わるので、
-   ここに `prefers-color-scheme` を書く必要がない。
+   Colors are built only from the variables in style.css. Dark mode switches on the
+   variable side, so there is no need to write `prefers-color-scheme` here.
 
-   **移り変わり（transition / animation）を書かない。**出入りにアニメーションを
-   付けると、そのあいだ毎フレーム描画が走る。アイドル中に 60fps で描き続ける
-   不具合を直したばかりである（第5-10節）。 */
+   No transitions or animations. Animating the entry and exit means a repaint every
+   frame for the duration. A defect that kept painting at 60fps while idle was fixed
+   only recently (§5-10). */
 
-/* ------------------------------------------------------------ F1 の覆い */
+/* ---------------------------------------------------------- The F1 overlay */
 
-/* 見出しの一覧（outline.css）と同じ作法で組む。**既にある部品と見た目が違うと、
-   それだけで「別のもの」に見えて覚えることが増える**（第4節の第二優先）。 */
+/* Built in the same manner as the outline list (outline.css). If it looked different
+   from a part that already exists, that alone would make it read as a different
+   thing and add something to remember (the second priority in §4). */
 .gera-keys {
   position: fixed;
   inset: 0;
   z-index: 10;
-  /* 本文を薄く伏せる。**隠すためではなく、一覧が本文の一部でないことを示すため**で、
-     下の文字が読める濃さに留める。 */
+  /* Dims the text underneath. Not to hide it, but to show that the list is not part
+     of the text, so the density stays light enough to read the characters below. */
   background: color-mix(in srgb, var(--bg) 72%, transparent);
   display: flex;
   justify-content: center;
-  /* **中身の高さで留める。**既定の stretch だと箱だけが画面の高さのまま残る。 */
+  /* Hold to the height of the content. With the default stretch, the box alone would
+     stay as tall as the screen. */
   align-items: flex-start;
   padding: 8vh 1.5rem 1.5rem;
   box-sizing: border-box;
@@ -46,15 +50,17 @@
   background: var(--bg);
   border: 1px solid var(--rule);
   border-radius: 8px;
-  /* 覆いが半透明なので、枠だけでは本文と地続きに見える。影で一枚持ち上げる。 */
+  /* The overlay is translucent, so a border alone would leave the box looking
+     continuous with the text. A shadow lifts it one layer up. */
   box-shadow: 0 0.5rem 2rem color-mix(in srgb, var(--fg) 20%, transparent);
-  outline: none; /* 焦点を受けるために tabindex を持つが、枠は出さない */
+  outline: none; /* it carries tabindex to receive focus, but shows no focus ring */
 }
 
-/* ---------------------------------------------------------------- 一覧本体 */
+/* ------------------------------------------------------------- The list body */
 
-/* **キーと意味を二列で揃える。**縦に揃っていないと、探しているキーを目で追えない。
-   左の列は中身の幅で決まる（`max-content`）ので、綴りの長短で列が動かない。 */
+/* Keys and meanings are aligned in two columns. Unaligned, the eye cannot track down
+   the key it is looking for. The left column is sized by its content
+   (`max-content`), so the column does not move with the length of a spelling. */
 .gera-keys-list {
   display: grid;
   grid-template-columns: max-content 1fr;
@@ -63,23 +69,26 @@
   align-items: baseline;
 }
 
-/* キーの綴りは等幅。**打つ文字そのもの**なので、地の文と同じ書体では埋もれる。
-   色は `--accent`——gera が「ここが要点」に使っている色である（style.css）。 */
+/* Key spellings are monospaced. They are the characters you actually type, so in the
+   same typeface as running text they would be lost in it. The color is `--accent` —
+   the color gera uses for "this is the point" (style.css). */
 .gera-keys-key {
   font: 0.85rem/1.8 var(--font-mono);
   color: var(--accent);
   white-space: nowrap;
 }
 
-/* 意味はゴシック。**明朝で組まれるのは本文だけで、それがモード表示でもある**（第5節）。 */
+/* Meanings are set in the sans-serif (gothic) face. Only the prose is set in the
+   serif (mincho) face, and that is itself the mode indicator (§5). */
 .gera-keys-desc {
   font: 0.9rem/1.8 var(--font-sans);
   color: var(--fg);
 }
 
-/* 群の見出し。**主たる一覧との差が付けばよい**ので、小さく薄くするだけに留める。
-   **二列ぶんを跨がせる。**群ごとに格子を分けるとキーの列の幅が群ごとに変わり、
-   綴りが縦に揃わなくなる（keys.ts の buildList）。 */
+/* The group heading. All it needs is to differ from the main list, so it goes no
+   further than smaller and fainter. It spans both columns: splitting the grid per
+   group would make the width of the key column vary from group to group, and the
+   spellings would stop lining up vertically (buildList in keys.ts). */
 .gera-keys-group {
   grid-column: 1 / -1;
   font: 0.75rem/1.6 var(--font-sans);
@@ -88,27 +97,29 @@
   margin: 1.1rem 0 0.35rem;
 }
 
-/* -------------------------------------------- 空の文書のときの控えめな一覧 */
+/* --------------------------- The quiet list on an empty document */
 
-/* **引数なしで起動すると編集モードで真っ白になる**（第9-6節）。表示するものが
-   無い瞬間なので、ここに一覧を出しても画面を何も奪わない。**友人の初回起動は
-   おそらくこの状態である**（第3節）。
+/* Launched with no arguments, the app comes up blank in edit mode (§9-6). It is a
+   moment with nothing to display, so putting the list here takes nothing away from
+   the screen. The friend's first launch is most likely this state (§3).
 
-   **覆いにしない。**空の文書で利用者ができることは「書き始める」ことであり、
-   閉じさせる形は目的と逆を向く（keys.ts 冒頭）。
+   Not an overlay. What a user can do with an empty document is start writing, and a
+   form that demands to be closed points away from the purpose (head of keys.ts).
 
-   置き場は CodeMirror の本文ではなくスクロールする器（`.cm-scroller`）の中で、
-   そこへ絶対配置する。**器が `position: relative` なので、絶対配置でも中身と
-   一緒にスクロールする。**out of flow なので flex の並びにも入らず、本文の幅も
-   高さも奪わない。
+   It sits not in CodeMirror's content but inside the scrolling container
+   (`.cm-scroller`), positioned absolutely within it. The container is
+   `position: relative`, so even absolutely positioned it scrolls along with the
+   content. Being out of flow, it does not join the flex layout either, and takes
+   away neither width nor height from the text.
 
-   横位置は `.cm-content` に合わせる。**幅を em で書けない**——em はこの要素自身の
-   font-size に対する比なので、基準の変数から直に組み立てる。左だけ 6px 多いのは
-   `.cm-line` の左余白（CodeMirror の既定）ぶんである。
+   The horizontal position matches `.cm-content`. The width cannot be written in em —
+   em is a ratio against this element's own font-size — so it is built directly from
+   the base variables. The extra 6px on the left alone accounts for the left padding
+   of `.cm-line` (a CodeMirror default).
 
-   上端の 5rem は `.cm-content` の上余白 3.5rem より下、つまり**カーソルのある
-   一行目より下**に置くためのものである。左上の札（style.css の `.gera-file`、
-   背の高さ約 2.6rem）とも重ならない。 */
+   The 5rem top places it below the 3.5rem top padding of `.cm-content`, that is,
+   below the first line where the cursor sits. It also stays clear of the label at
+   the top left (`.gera-file` in style.css, about 2.6rem tall). */
 #app .cm-scroller > .gera-keys-hint {
   position: absolute;
   top: 5rem;
@@ -118,12 +129,14 @@
   box-sizing: border-box;
   width: min(100%, calc(42 * var(--font-size-edit) * var(--font-scale)));
   padding: 0 1.5rem 0 calc(1.5rem + 6px);
-  /* **打鍵の邪魔をしない。**文字の選択もカーソルの移動も、この要素が奪わない。 */
+  /* It must not get in the way of keystrokes. This element steals neither text
+     selection nor cursor movement. */
   pointer-events: none;
 }
 
-/* **覆いより更に薄く出す。**これから書く紙の上に置くものなので、書き始めた文字と
-   競ってはならない。打てば消えるものであり、読ませるためのものではない。 */
+/* Shown fainter still than in the overlay. It lies on the paper about to be written
+   on, so it must not compete with the characters once writing starts. It is
+   something that disappears when you type, not something meant to be read. */
 .gera-keys-hint .gera-keys-key,
 .gera-keys-hint .gera-keys-desc {
   color: var(--dim);

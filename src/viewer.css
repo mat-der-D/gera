@@ -1,107 +1,117 @@
-/* 閲覧モードの版面（設計 第4節・第5節）。
-   このファイルは viewer.ts からのみ import される。閲覧モードに入るまで
-   読み込まれないので、起動時の費用にならない（第3節）。
+/* The type area for viewer mode (see DESIGN.md §4 and §5).
+   This file is imported only from viewer.ts. It is not loaded until viewer mode is
+   entered, so it does not cost anything at startup (§3).
 
-   狙いは一つだけである——**AI が出した 3000 字超の日本語を、通しで読み通せること。**
-   欧文向けの既定値（行長 70 文字前後・行間 1.5）は日本語では詰まりすぎるため、
-   行長は全角で数え、行間と段落間はそれに合わせて広げてある。
+   There is exactly one aim — being able to read more than 3000 characters of
+   AI-produced Japanese straight through. The defaults meant for Latin text (a measure of
+   about 70 characters, leading of 1.5) are too tight for Japanese, so the measure is
+   counted in full-width characters, and the leading and the paragraph spacing are opened
+   up to match.
 
-   **ここに現れるクラス名は公開 API である**（第9-4節）。利用者が自分の CSS で
-   見た目を変えられることが要件なので、名前を変えるときは docs/CSS.md も直すこと。 */
+   The class names appearing here are public API (§9-4). Being able to change the look
+   with your own CSS is a requirement, so when renaming one, fix docs/CSS.md too. */
 
 .gera-view {
   height: 100%;
   overflow-y: auto;
-  /* 常設 UI は左上の札ひとつだけ（style.css の `.gera-file`）なので、余白が
-     そのまま画面構成になる。**上の 3.5rem は、その札（背の高さ約 2.6rem）より
-     下から本文が始まるための余白でもある**——ここを詰めると先頭が札の裏に入る。
-     下の 60vh は、末尾を画面の中ほどまで送れるようにするためのもの（editor.ts と同じ）。 */
+  /* The only permanent UI is the single label at the top left (`.gera-file` in
+     style.css), so the padding is what makes up the layout. The 3.5rem at the top is
+     also the space that lets the body start below that label (about 2.6rem tall) —
+     tighten it and the first line goes behind the label.
+     The 60vh at the bottom is so the end of the document can be sent up to the middle of
+     the screen (same as editor.ts). */
   padding: 3.5rem 1.5rem 60vh;
   box-sizing: border-box;
-  outline: none; /* キーボードで送るために tabindex を持つが、枠は出さない */
+  outline: none; /* It carries tabindex so it can be scrolled by keyboard, but no focus ring */
 }
 
 .gera-doc {
-  /* 明朝で組むこと自体がモード表示である（第5節）。切り替えの唯一の手掛かりなので、
-     ここで書体を上書きしない。 */
+  /* Setting the text in a serif face is itself the mode indicator (§5). It is the only
+     cue that the mode switched, so do not override the typeface here. */
   font-family: var(--font-serif);
-  /* 1em = 全角一文字。日本語は 30〜40 字で折り返すのが読みやすい。 */
+  /* 1em = one full-width character. Japanese reads well wrapped at 30-40 characters. */
   max-width: 35em;
   margin: 0 auto;
-  /* 基準（利用者 CSS が決める）× 倍率（Mod +/- が決める）。分けてある理由は
-     style.css の変数定義の側に書いた。**このファイルの他の寸法はすべて em で
-     書いてあるので、ここが動けば版面全体が比例して動く。** */
+  /* Base (decided by the user's CSS) x scale (decided by Mod +/-). The reason they are
+     separate is written on the side of the variable definitions in style.css. Every
+     other dimension in this file is written in em, so if this moves the whole type area
+     moves proportionally. */
   font-size: calc(var(--font-size-view) * var(--font-scale));
   line-height: 1.95;
   color: var(--fg);
-  /* 長い URL や語で行が破綻しないようにするだけで、日本語の折り返しは既定に任せる。 */
+  /* This only keeps a long URL or word from breaking the line; Japanese wrapping is left
+     to the default. */
   overflow-wrap: break-word;
 }
 
 .gera-doc > :first-child { margin-top: 0; }
 
-/* ------------------------------------------------------ 画面外を描かない */
+/* ------------------------------------------------- Not painting off-screen */
 
-/* **初版の必須要件である**（第5-4節）。2,204 個の数式を含む 2,838 行の文書で、
-   描画 1,156 ms のうち 951 ms（82%）がレイアウトとペイントだった。
-   content-visibility: auto は画面の外にあるブロックをその両方から外す。
+/* A mandatory requirement for the first release (§5-4). On a 2,838-line document
+   containing 2,204 equations, 951 ms of the 1,156 ms render (82%) was layout and paint.
+   content-visibility: auto takes off-screen blocks out of both.
 
-   **実測し直した値を残す**（gera の release ビルド、同じ文書、WebKitGTK 2.52）。
-   閲覧モードに切り替えてから最初のフレームが出るまで、有りで 797 ms、
-   無しで 939〜1,104 ms。設計文書の 1,028 → 449 ms ほどの差は出なかったが、
-   効いてはいる。**ただし途中で寸法を測ると効果が消える**——同期のレイアウトが
-   その場で走り、飛ばすはずだった仕事を先に払うためで、実測で 946 ms に戻った。
-   viewer.ts の scrollToLine が先頭のときに測らないのはこのためである。
+   Recording the re-measured values (gera release build, same document, WebKitGTK 2.52).
+   From switching to viewer mode until the first frame appears: 797 ms with it, 939-1,104
+   ms without. The gap was not as large as the 1,028 → 449 ms in the design document, but
+   it does help. However, the effect disappears if anything measures dimensions in the
+   middle — a synchronous layout runs there and then, paying up front the work that was
+   supposed to be skipped, which measured back at 946 ms. This is why scrollToLine in
+   viewer.ts does not measure when the target is the top.
 
-   **contain-intrinsic-size を必ず添える。**無いと画面外の高さが 0 と見なされ、
-   文書全体の高さが縮んでスクロールバーが暴れる。値は「その種類の要素の
-   ありがちな高さ」で構わない——`auto` 付きの指定を解する実装では一度描いた
-   要素は実測値を憶えるので、推定が効くのは初回だけである。`auto` を解さない
-   実装のために素の値を先に置き、二段で書く。
+   Always pair it with contain-intrinsic-size. Without it, off-screen height is treated
+   as 0, the whole document's height shrinks, and the scrollbar jumps around. The value
+   can just be "a typical height for that kind of element" — in implementations that
+   understand the `auto` form, an element remembers its measured size once painted, so
+   the estimate only matters the first time. For implementations that do not understand
+   `auto`, the bare value is written first, in two steps.
 
-   推定がずれる以上、位置合わせは一度では着かない。寄せ直しは viewer.ts の
-   settle() が持つ。 */
+   Since the estimate is off, alignment does not land in one pass. The re-scrolling is
+   handled by settle() in viewer.ts. */
 
-/* **推定は px ではなく em で置く。**字の大きさは基準と倍率の両方で動く
-   （.gera-doc の font-size）ので、px で固定すると**拡大したときだけ推定が
-   小さいまま残る。**画面外の文書が実際より短く見積もられ、スクロールバーの
-   長さが縮んで、送るたびに位置が跳ねる。em は自分の font-size に対する比なので、
-   基準を利用者 CSS が変えても倍率を Mod +/- が変えても、同じ比のまま付いてくる。
-   値は 17px 当時の px をその要素の font-size で割ったものである（下の h1 なら
-   52px ÷ 2em = 1.53em）。 */
+/* Write the estimate in em, not px. The text size moves with both the base and the scale
+   (the font-size of .gera-doc), so fixing it in px leaves the estimate too small only
+   when zoomed in. The off-screen document is then estimated shorter than it really is,
+   the scrollbar shrinks, and the position jumps every time you scroll. em is a ratio
+   against the element's own font-size, so whether the user's CSS changes the base or
+   Mod +/- changes the scale, it follows at the same ratio.
+   The values are the px figures from back when it was 17px divided by that element's
+   font-size (for h1 below, 52px / 2em = 1.53em). */
 
 .gera-doc > * {
   content-visibility: auto;
   contain-intrinsic-size: 6.5em;
   contain-intrinsic-size: auto 6.5em;
 }
-/* 見出しは一行しかないので、段落と同じ推定を与えると文書が実際より長く見える。 */
+/* A heading is only one line, so giving it the same estimate as a paragraph makes the document look longer than it is. */
 .gera-doc > h1 { contain-intrinsic-size: 1.53em; contain-intrinsic-size: auto 1.53em; }
 .gera-doc > h2 { contain-intrinsic-size: 1.8em; contain-intrinsic-size: auto 1.8em; }
 .gera-doc > h3,
 .gera-doc > h4,
 .gera-doc > h5,
 .gera-doc > h6 { contain-intrinsic-size: 1.8em; contain-intrinsic-size: auto 1.8em; }
-/* 箇条書き・コード・表・別行立ての数式は段落より背が高いほうに寄せる。 */
+/* Lists, code, tables and display math lean towards being taller than a paragraph. */
 .gera-doc > ul,
 .gera-doc > ol { contain-intrinsic-size: 9.4em; contain-intrinsic-size: auto 9.4em; }
 .gera-doc > pre { contain-intrinsic-size: 14.8em; contain-intrinsic-size: auto 14.8em; }
 .gera-doc > .gera-table { contain-intrinsic-size: 12.9em; contain-intrinsic-size: auto 12.9em; }
 .gera-doc > .gera-math { contain-intrinsic-size: 3.5em; contain-intrinsic-size: auto 3.5em; }
-/* 罫は実寸が分かっているので推定を要らなくする。 */
+/* A rule's real size is known, so no estimate is needed. */
 .gera-doc > hr { content-visibility: visible; }
 
-/* ------------------------------------------------------------------ 見出し */
+/* ------------------------------------------------------------------ Headings */
 
-/* 階層は大きさより**上の余白**で示す。装飾を足さずに切れ目が見えるほうが、
-   長い文書では効く。h2 にだけ罫を引いてあるのは、章の切れ目が最も重要だからで、
-   すべての見出しに引くと罫だらけになって差が消える。 */
+/* The hierarchy is shown by the space above rather than by size. Making the breaks
+   visible without adding decoration works better in a long document. Only h2 gets a
+   rule, because the chapter break matters most; put a rule on every heading and it turns
+   into nothing but rules, and the distinction vanishes. */
 .gera-doc h1, .gera-doc h2, .gera-doc h3,
 .gera-doc h4, .gera-doc h5, .gera-doc h6 {
   font-weight: 600;
   line-height: 1.5;
   letter-spacing: 0.02em;
-  /* 見出しジャンプの着地点。上の余白ごと画面外に出ないようにする。 */
+  /* The landing point for heading jumps. Keeps the space above from going off-screen too. */
   scroll-margin-top: 1.5rem;
 }
 .gera-doc h1 { font-size: 2em;    margin: 2.4em 0 1.2em; }
@@ -111,18 +121,18 @@
 .gera-doc h5 { font-size: 1em;    margin: 2em 0 0.7em; }
 .gera-doc h6 { font-size: 1em;    margin: 2em 0 0.7em; color: var(--dim); }
 
-/* -------------------------------------------------------------- 段落と箇条 */
+/* --------------------------------------------------- Paragraphs and lists */
 
 .gera-doc p { margin: 1.5em 0; }
 
 .gera-doc ul, .gera-doc ol { margin: 1.5em 0; padding-left: 1.7em; }
 .gera-doc li { margin: 0.5em 0; }
-/* 入れ子は外側との間隔を詰める。親の段落と同じだけ空けると、階層が崩れて見える。 */
+/* Nested lists sit tighter against the outer one. Open them as much as a parent paragraph and the hierarchy looks broken. */
 .gera-doc li > ul, .gera-doc li > ol { margin: 0.5em 0; }
 .gera-doc li > p { margin: 0.6em 0; }
 .gera-doc ul > li::marker { color: var(--accent); }
 
-/* 読み専用なので checkbox は固定。記号の位置は箇条書きの点と揃える。 */
+/* Read-only, so the checkbox is fixed. The marker lines up with the list bullet. */
 .gera-doc li.gera-task { list-style: none; margin-left: -1.35em; }
 .gera-doc li.gera-task input[type="checkbox"] { margin: 0 0.5em 0 0; accent-color: var(--accent); }
 
@@ -130,13 +140,13 @@
   margin: 1.8em 0;
   padding: 0.1em 0 0.1em 1.2em;
   border-left: 3px solid var(--rule);
-  /* 本文より一段引くが、読めなくなるほど薄くはしない。 */
+  /* A step back from the body text, but not so faint that it becomes unreadable. */
   opacity: 0.88;
 }
 
 .gera-doc hr { border: 0; border-top: 1px solid var(--rule); margin: 3.5em 0; }
 
-/* ------------------------------------------------------------ 文字と装飾 */
+/* --------------------------------------------------- Type and decoration */
 
 .gera-doc strong { font-weight: 700; }
 .gera-doc em { font-style: italic; }
@@ -145,10 +155,10 @@
 
 .gera-doc img { display: block; max-width: 100%; margin: 1.8em auto; }
 
-/* --------------------------------------------------------------- コード */
+/* --------------------------------------------------------------- Code */
 
-/* シンタックスハイライトは入れない（起動速度が第一優先。第3節）。
-   等幅と地色だけで、本文との区別は十分に付く。 */
+/* No syntax highlighting (startup speed is the first priority, §3).
+   A monospace face and a background alone distinguish it from the body text well enough. */
 .gera-doc code, .gera-doc pre { font-family: var(--font-mono); }
 
 .gera-doc :not(pre) > code {
@@ -167,14 +177,14 @@
   font-size: 0.875em;
   line-height: 1.7;
   tab-size: 4;
-  /* **はみ出しはこの箱の中だけで送る。**本文まで横に動くと行頭を見失う。 */
+  /* Overflow scrolls inside this box only. If the body text moves sideways too, you lose the start of the line. */
   overflow-x: auto;
 }
 .gera-doc pre > code { white-space: pre; background: none; padding: 0; }
 
-/* ----------------------------------------------------------------- 表 */
+/* ----------------------------------------------------------------- Tables */
 
-/* AI 出力の表は横に長い。本文ごと横スクロールさせず、表の中だけで送る。 */
+/* Tables in AI output run wide. Do not scroll the body text with them; scroll inside the table only. */
 .gera-table { margin: 1.8em 0; overflow-x: auto; }
 
 .gera-doc table { border-collapse: collapse; font-size: 0.93em; line-height: 1.75; }
@@ -184,39 +194,41 @@
   text-align: left;
   vertical-align: top;
 }
-/* 見出し行は地色と字面で二重に区別する。列数の多い表ほど、ここが効く。 */
+/* The header row is distinguished twice over, by background and by weight. The more columns a table has, the more this matters. */
 .gera-doc thead th { background: var(--code-bg); font-weight: 600; white-space: nowrap; }
 .gera-doc tbody tr:nth-child(even) { background: var(--zebra); }
 
-/* --------------------------------------------------------------- 数式 */
+/* --------------------------------------------------------------- Math */
 
-/* KaTeX の既定は本文の 1.21 倍で、17px の日本語の隣では大きく浮く。
-   欧文の本文に合わせた値なので、和文向けに落とす。 */
+/* KaTeX's default is 1.21 times the body text, which floats up conspicuously next to
+   17px Japanese. That value is tuned to Latin body text, so bring it down for Japanese. */
 .gera-doc .katex { font-size: 1.08em; }
 
-/* 別行立ては横に長くなる。**本文ごと横スクロールさせない**のは表やコードと
-   同じ理由で、行頭が動くと読めなくなる。 */
+/* Display math runs wide. Not letting the body text scroll with it is for the same
+   reason as tables and code: moving the start of the line makes it unreadable. */
 .gera-math {
   margin: 1.8em 0;
   overflow-x: auto;
-  /* **縦には送らない。**`overflow-x: auto` だけを書くと、CSS の規定により
-     `overflow-y` は `visible` のままではいられず `auto` に落ちる。KaTeX の
-     別行立ては行送りの都合で数ピクセルだけ縦にはみ出すことがあり（`\int` の
-     ような背の高い記号で起きる）、そのぶんの縦スクロールバーが数式の右脇に
-     出てしまう。**`hidden` にしても見えるものは変わらない**——スクロール位置が
-     先頭にある箱と、同じ内容を切り落とした箱は、同じピクセルを出す。
-     変わるのは「送れるかどうか」だけで、送れても数ピクセルしか動かない。
-     むしろ、数式の上にポインタがあるときにホイールを横取りしなくなる。 */
+  /* Do not scroll vertically. Write `overflow-x: auto` alone and, by the CSS rules,
+     `overflow-y` cannot stay `visible` and falls back to `auto`. KaTeX display math can
+     overflow vertically by a few pixels because of line spacing (it happens with tall
+     symbols such as `\int`), and a vertical scrollbar for those few pixels shows up
+     beside the equation. Setting `hidden` changes nothing about what is visible — a box
+     scrolled to the top and a box with the same content clipped paint the same pixels.
+     All that changes is "whether it can be scrolled", and even scrolled it moves only a
+     few pixels. If anything, it stops the equation from stealing the wheel when the
+     pointer is over it. */
   overflow-y: hidden;
-  /* はみ出しを切らずに送るため、内側の p の余白はここに移す。 */
+  /* So the overflow can scroll rather than be clipped, the inner p's margin moves here. */
   padding: 0.2em 0;
 }
 .gera-math > .katex-block { margin: 0; }
 .gera-doc .katex-block { text-align: center; }
 .gera-doc .katex-display { margin: 0; }
 
-/* 変換に失敗した数式（KaTeX が解せない綴り）。本文色のままだと誤りに見えないので、
-   等幅で地色を付けて「ここは描けなかった」と分かる形にする。 */
+/* An equation that failed to convert (spelling KaTeX cannot parse). In the body text
+   color it would not look like an error, so it gets a monospace face and a background so
+   that "this could not be rendered" is legible. */
 .gera-doc .katex-error {
   font-family: var(--font-mono);
   font-size: 0.85em;
@@ -226,8 +238,8 @@
   border-radius: 3px;
 }
 
-/* --------------------------------------------------------- 折りたたみ */
+/* --------------------------------------------------------- Disclosure */
 
-/* AI 出力に頻出する。html: true で通しているので、閉じた状態でも形を保つ。 */
+/* Common in AI output. It is passed through with html: true, so it keeps its shape even when collapsed. */
 .gera-doc details { margin: 1.6em 0; padding-left: 1.2em; border-left: 3px solid var(--rule); }
 .gera-doc summary { cursor: default; font-weight: 600; }
