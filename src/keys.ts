@@ -100,10 +100,10 @@ const GROUPS: Group[] = [
   {
     title: "閲覧モードで",
     rows: [
-      { key: "↑ ↓ / j k", desc: "紙面を一行送る" },
+      { key: "↑ ↓ / j k", desc: "一行進む。紙面のほうが動く" },
       { key: "PageUp / PageDown", desc: "紙面を一画面送る" },
       { key: `${MOD}+↑ ↓ / ${MOD}+K J`, desc: "同上。手を中央に置いたまま" },
-      { key: "Shift+↑ ↓ / Shift+K J", desc: "トラッカーの帯を一行動かす" },
+      { key: "Shift+↑ ↓ / Shift+K J", desc: "一行進む。トラッカーの帯のほうが動く" },
       { key: "Enter", desc: "画面の外に離れた帯を、いま見ている先頭行へ" },
     ],
   },

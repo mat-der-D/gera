@@ -82,6 +82,9 @@ let attached = false;
  */
 let heldY = 0;
 
+/** Fraction of a scroll the engine would not apply, spent on the next press. */
+let carry = 0;
+
 function hold(ms: number): void {
   holdUntil = Math.max(holdUntil, performance.now() + ms);
 }
@@ -264,11 +267,45 @@ function step(dir: 1 | -1): void {
     if (!line) continue;
     if (dir > 0 ? line.top > from : line.top < from) {
       record(line.top, line.height);
-      keepInView();
-      anchor();
       return;
     }
   }
+}
+
+/**
+ * Move the tracker a line and leave the window where it was: the paper is scrolled by
+ * exactly the distance the tracker travelled, putting the band back on the pixel it
+ * started from.
+ *
+ * This is what an unmodified `↑↓` does while the tracker is on. It is not the same as
+ * scrolling the paper by a line and taking whatever arrives at that height, which is
+ * what it used to do — the owner asked for this shape instead (2026-09-07), and it is
+ * the better one for two reasons. The line advances by exactly one every press, rather
+ * than by whatever the fixed scroll happens to land on. And the paper moves by the real
+ * distance between the two lines, so a paragraph margin or a heading is crossed
+ * correctly instead of by a body line's height.
+ *
+ * At the end of the document the paper cannot scroll any further, and the band moves
+ * down the window instead. That is the honest outcome: there is no more paper to move.
+ */
+function stepWithPaper(dir: 1 | -1): void {
+  if (!host) return;
+  const before = windowTop();
+  step(dir);
+  const delta = windowTop() - before;
+  if (delta !== 0) {
+    hold(200);
+    // The engine keeps `scrollTop` on whole pixels while the distance between two lines
+    // is fractional, so each press leaves a fraction unscrolled. Unspent, it piles up:
+    // measured, the band walked 3px down the window over twelve presses. Carry the
+    // remainder into the next press instead. The clamp is so that hitting the end of
+    // the document — where the scroll is refused wholesale, not rounded — does not load
+    // the carry with a whole screen.
+    const wanted = host.scrollTop + delta + carry;
+    host.scrollTop = wanted;
+    carry = Math.max(-1.5, Math.min(1.5, wanted - host.scrollTop));
+  }
+  anchor();
 }
 
 /** Put the tracker on the first line of the window — the line about to be read (§9-9). */
@@ -277,6 +314,7 @@ function pickUp(): void {
   if (!rect) return;
   const line = lineAt(rect.top + 1);
   if (!line) return;
+  carry = 0;
   record(line.top, line.height);
   anchor();
 }
@@ -286,6 +324,7 @@ function pullBack(): void {
   const rect = host?.getBoundingClientRect();
   if (!rect || !host) return;
   hold(200);
+  carry = 0;
   host.scrollTop += windowTop() - (rect.top + rect.height / 3);
   anchor();
 }
@@ -353,6 +392,7 @@ export function off(): void {
   if (!on) return;
   on = false;
   attached = false;
+  carry = 0;
   clearTimeout(settleTimer);
   host?.removeEventListener("scroll", onScroll);
   window.removeEventListener("resize", onResize);
@@ -400,15 +440,29 @@ export function handleKey(e: KeyboardEvent): boolean {
   if (!on || e.isComposing || e.metaKey || e.ctrlKey || e.altKey) return false;
 
   const key = e.key.toLowerCase();
-  const down = e.shiftKey && (key === "arrowdown" || key === "j");
-  const up = e.shiftKey && (key === "arrowup" || key === "k");
+  const down = key === "arrowdown" || key === "j";
+  const up = key === "arrowup" || key === "k";
   if (down || up) {
-    // Off screen, the first press only brings the window back — it does not move the
-    // tracker. gera already asks for a second press once, when `Mod+R` would throw away
-    // unsaved work (§9-6 (d)), so this manner has been learned already. The reversible
-    // side is the default (§11).
-    if (!visible()) pullBack();
-    else step(down ? 1 : -1);
+    if (e.shiftKey) {
+      // Move the band and leave the paper alone. Off screen, the first press only
+      // brings the window back — it does not move the tracker. gera already asks for a
+      // second press once, when `Mod+R` would throw away unsaved work (§9-6 (d)), so
+      // this manner has been learned already, and the reversible side is the default
+      // (§11).
+      if (!visible()) pullBack();
+      else {
+        step(down ? 1 : -1);
+        keepInView();
+        anchor();
+      }
+      e.preventDefault();
+      return true;
+    }
+    // Unmodified: move the band and bring the paper along so the band stays put. While
+    // the band is off screen there is nothing to carry, so this is left to the plain
+    // scroll in main.ts — the paper moves and the tracker keeps the line it is on.
+    if (!visible()) return false;
+    stepWithPaper(down ? 1 : -1);
     e.preventDefault();
     return true;
   }
