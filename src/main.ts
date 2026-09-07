@@ -487,6 +487,21 @@ function viewerElement(): HTMLElement {
   return el;
 }
 
+/**
+ * Scroll the view by one line. What `j` / `k` do while the tracker is off.
+ *
+ * One line means one line of the text column, taken from its computed `line-height`.
+ * The webview's own arrow-key step is a fixed number of pixels and does not follow the
+ * font size, so matching it would drift from "one line" as soon as `Mod +` is pressed.
+ * `line-height: normal` computes to a keyword rather than a length, hence the fallback.
+ */
+function scrollViewByLine(dir: 1 | -1): void {
+  if (!scroller) return;
+  const doc = scroller.querySelector<HTMLElement>(".gera-doc");
+  const step = doc ? parseFloat(getComputedStyle(doc).lineHeight) : NaN;
+  scroller.scrollTop += dir * (Number.isFinite(step) && step > 0 ? step : 40);
+}
+
 /** The line visible at the top of the screen in edit mode (0-based, matching data-line on the view side). */
 function editorTopLine(v: EditorView): number {
   const rect = v.scrollDOM.getBoundingClientRect();
@@ -1183,6 +1198,19 @@ window.addEventListener("keydown", (e) => {
   // behind it.
   if (mode === "view" && !outline?.isOpen() && !find?.isOpen() && !keys?.isOpen()) {
     if (tracker?.handleKey(e)) return;
+    // With the tracker off, `j` / `k` still have to scroll, because they are aliases of
+    // the arrow keys and not a mode of their own (§9-11). The reason they exist —
+    // keyboards that need a modifier to reach the arrow keys — does not go away when
+    // the tracker is off; binding them only while it is on would take the one-line
+    // scroll away from exactly the people the aliases are for. The arrow keys
+    // themselves need nothing here: the webview scrolls with them already.
+    if (!e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && !e.isComposing) {
+      if (e.key === "j" || e.key === "k") {
+        scrollViewByLine(e.key === "j" ? 1 : -1);
+        e.preventDefault();
+        return;
+      }
+    }
   }
 
   if (!(e.metaKey || e.ctrlKey) || e.altKey || e.isComposing) return;
