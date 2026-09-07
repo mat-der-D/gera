@@ -150,7 +150,27 @@ function windowTop(): number {
   return (rect ? rect.top : 0) + docTop - (host?.scrollTop ?? 0);
 }
 
+/**
+ * One line of the text column. The band is never drawn shorter than this.
+ *
+ * Some blocks are far shorter than a line. `---` is an `<hr>` whose border box is the
+ * 1px rule itself (viewer.css), so the measured rectangle is 1px tall and the band
+ * disappears into it — the owner could not tell where the tracker was. Growing a short
+ * rectangle to a line, around its own centre, keeps the band the same object everywhere
+ * instead of one that vanishes on certain blocks.
+ */
+function bodyLine(): number {
+  const doc = host?.querySelector<HTMLElement>(".gera-doc");
+  const value = doc ? parseFloat(getComputedStyle(doc).lineHeight) : NaN;
+  return Number.isFinite(value) && value > 0 ? value : 24;
+}
+
 function record(top: number, height: number): void {
+  const min = bodyLine();
+  if (height < min) {
+    top -= (min - height) / 2;
+    height = min;
+  }
   const rect = host?.getBoundingClientRect();
   docTop = top - (rect ? rect.top : 0) + (host?.scrollTop ?? 0);
   lineHeight = height;
