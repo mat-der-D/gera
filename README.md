@@ -71,6 +71,8 @@ Rust 側の責務はファイル入出力、ダイアログ、ウィンドウ状
 - **試用版**——[Actions](../../actions/workflows/build.yml) の最新の実行を開いてアーティファクトを落とす。**GitHub にログインしていないと落とせない**
 - **公開版**——[Releases](../../releases)。タグを打つと下書きができ、確認してから公開する
 
+**タグは [Release ワークフロー](../../actions/workflows/release.yml)から切る**（Run workflow に `0.1.1` のように版を入れる。`v` は付けない）。版が四か所——`package.json`・`package-lock.json`・`src-tauri/tauri.conf.json`・`src-tauri/Cargo.toml`——に散らばっているので、**まとめて上げてタグを打ち、ビルドまで起こす。**成果物を Releases に置くのは `build.yml` のほうで、**できるのは下書きまでである。**
+
 | | アーティファクト |
 |---|---|
 | Windows | `gera-windows-installer`（インストーラ）/ `gera-windows-exe`（素の実行ファイル） |

@@ -1,0 +1,131 @@
+# 版を上げて、タグを切って、ビルドを起こすところまで。
+#
+# **成果物を Releases に置くのはこのファイルではない。**それは `build.yml` の
+# `release` ジョブが既にやっている（タグ `v*` で下書きを作る）。**リリース本文を
+# 書く場所を二つに増やさないため**で、理由は `build.yml` の冒頭に書いてある。
+# ここがやるのは、**手で四つのファイルを書き換えてタグを打つ作業**だけである。
+#
+# **版が四か所に散らばっている**——`package.json`・`package-lock.json`・
+# `src-tauri/tauri.conf.json`・`src-tauri/Cargo.toml`（と `Cargo.lock`）。
+# 手で上げると、どれか一つが取り残されたまま配ることになる。
+#
+# **使い方。**Actions → Release → Run workflow で版（`0.1.1` のように `v` は
+# 付けない）を入れる。走り終わると `build.yml` が同じタグに対して起動し、
+# 三 OS 分の成果物を付けた**下書きの**リリースができる。**公開は手で行う**
+# （中身を確かめてから出す。`build.yml` の方針をそのまま引き継ぐ）。
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '版。v は付けない（例: 0.1.1）'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  # `build.yml` を起こすために要る。**GITHUB_TOKEN が押した push はワークフローを
+  # 起動しない**ので、タグを push しただけでは何も始まらない。`workflow_dispatch`
+  # と `repository_dispatch` だけがこの制限の例外なので、最後に明示的に叩く。
+  actions: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-24.04
+
+    steps:
+      # **main からしか切らない。**workflow_dispatch は任意の ref を選べてしまう。
+      - name: Refuse to release from anywhere but main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::main からのみリリースできる（選ばれた ref: ${{ github.ref }}）"
+          exit 1
+
+      - uses: actions/checkout@v7
+
+      # **形は x.y.z に限る。**MSI と NSIS の版は数字三つしか受け付けないので、
+      # `0.2.0-rc1` のような形はビルドの終盤まで進んでから落ちる。ここで止める。
+      - name: Validate the version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::版は x.y.z の形で入れる（受け取った値: $VERSION）"
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" >/dev/null 2>&1; then
+            echo "::error::タグ v$VERSION は既にある。同じ版を切り直さない"
+            exit 1
+          fi
+
+      # **上げる前に、四か所が揃っていることを確かめる。**揃っていない状態から
+      # 上げると、ずれたまま次の版へ持ち越す。ここで気づけば直してからやり直せる。
+      - name: Check the current versions agree
+        run: |
+          pkg=$(node -p "require('./package.json').version")
+          conf=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          cargo=$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -1)
+          echo "package.json=$pkg tauri.conf.json=$conf Cargo.toml=$cargo"
+          if [ "$pkg" != "$conf" ] || [ "$pkg" != "$cargo" ]; then
+            echo "::error::今の版が食い違っている。手で揃えてからやり直す"
+            exit 1
+          fi
+
+      # package.json と package-lock.json は npm に任せる（lock の中にも版がある）。
+      # 残りは書き換える場所が一意なので、その行だけを差し替える——JSON を読み書き
+      # すると配列の畳み方まで変わってしまい、版と関係のない差分が出る。
+      - name: Bump the version everywhere
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          npm version --no-git-tag-version --allow-same-version "$VERSION"
+          python3 - "$VERSION" <<'PY'
+          import re, sys
+          version = sys.argv[1]
+
+          def sub_once(path, pattern, replacement):
+              text = open(path).read()
+              new, n = re.subn(pattern, replacement, text, count=1)
+              if n != 1:
+                  sys.exit(f"{path}: expected exactly one version line, replaced {n}")
+              open(path, 'w').write(new)
+
+          sub_once('src-tauri/tauri.conf.json',
+                   r'"version": "[^"]+"', f'"version": "{version}"')
+          sub_once('src-tauri/Cargo.toml',
+                   r'(?m)^version = "[^"]+"', f'version = "{version}"')
+          # Cargo.lock は gera 自身のブロックだけを直す。ここを放っておくと
+          # ビルドの最初に cargo が勝手に書き換え、リリースのコミットに
+          # 含まれない差分が残る。
+          sub_once('src-tauri/Cargo.lock',
+                   r'(?m)^(name = "gera"\nversion = )"[^"]+"', rf'\1"{version}"')
+          PY
+          git diff --stat
+
+      - name: Commit and tag
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -am "Release v$VERSION"
+          git tag -a "v$VERSION" -m "v$VERSION"
+          git push origin main "refs/tags/v$VERSION"
+
+      # **タグを push しただけでは `build.yml` は動かない**（上の actions: write の
+      # コメント参照）。タグを ref に指定して明示的に起こす——`build.yml` の
+      # `release` ジョブは `github.ref` が `refs/tags/v*` かどうかだけを見ているので、
+      # workflow_dispatch から入っても下書きリリースまで通る。
+      - name: Kick off the build for the new tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          gh workflow run build.yml --ref "v$VERSION"
+          echo "### v$VERSION のタグを切った" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "ビルドを起こした。終わると Releases に**下書き**ができるので、中身を見てから公開する。" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- [Build の実行一覧](${{ github.server_url }}/${{ github.repository }}/actions/workflows/build.yml)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- [Releases](${{ github.server_url }}/${{ github.repository }}/releases)" >> "$GITHUB_STEP_SUMMARY"
