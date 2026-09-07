@@ -109,7 +109,15 @@ jobs:
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -am "Release v$VERSION"
+          # **差分が無いことがある。**初版のように、ファイルが既にその版を
+          # 書いている場合である。`git commit` は何もコミットするものが無いと
+          # 落ちるので、コミットを作るかどうかは差分を見て決める——**タグは
+          # どちらの場合も打つ。**タグを打つことがこのワークフローの目的である。
+          if git diff --quiet; then
+            echo "版は既に $VERSION。コミットは作らずタグだけ打つ"
+          else
+            git commit -am "Release v$VERSION"
+          fi
           git tag -a "v$VERSION" -m "v$VERSION"
           git push origin main "refs/tags/v$VERSION"
 
