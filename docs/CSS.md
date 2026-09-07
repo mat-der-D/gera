@@ -14,6 +14,7 @@ gera の閲覧モードは、**素の HTML と、数えるほどのクラス名*
 |---|---|
 | **Linux** | `~/.config/dev.smoothpudding.gera/user.css` |
 | **Windows** | `%APPDATA%\dev.smoothpudding.gera\user.css` |
+| **macOS** | `~/Library/Application Support/dev.smoothpudding.gera/user.css` |
 
 **フォルダが無ければ作る。**`user.css` が無くても gera は普通に動く（無いことは失敗ではない）。
 

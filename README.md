@@ -92,11 +92,13 @@ Rust 側の責務はファイル入出力、ダイアログ、ウィンドウ状
 
 ### ユーザー CSS の置き場
 
-**Windows は `%APPDATA%\dev.smoothpudding.gera\user.css`、macOS は `~/Library/Application Support/dev.smoothpudding.gera/user.css` と推定している。**どちらも Tauri の `app_config_dir()` の定義から導いた値であって、**実機では未検証である**（[docs/DESIGN.md](docs/DESIGN.md) 第 15 節）。確認したらここを直す。
+**macOS は `~/Library/Application Support/dev.smoothpudding.gera/user.css` である。**Tauri の `app_config_dir()` の定義から導いた推定だったが、**2026-09-07 に実機で当たっていることが確かめられた**——このパスに置いた `user.css` が反映されたという報告である。
+
+**Windows の `%APPDATA%\dev.smoothpudding.gera\user.css` は、まだ推定のままである。**同じ `app_config_dir()` から導いた値であって、**実機では未検証である**（[docs/DESIGN.md](docs/DESIGN.md) 第 15 節）。確認したらここを直す。
 
 ### macOS で確かめること
 
-**macOS で gera を動かした人はまだ一人もいない。**上の二つに加えて、次が未検証である。
+**2026-09-07 に、macOS で gera が動き、`user.css` が反映されるところまで確かめられた。**置き場が当たっていたのはそのためである（一つ上）。**ただし、確かめられたのはそこまでである。**次は未検証のまま残る。
 
 | 項目 | いま分かっていること |
 |---|---|
