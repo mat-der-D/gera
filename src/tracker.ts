@@ -185,6 +185,21 @@ function visible(): boolean {
   return top + lineHeight > rect.top && top < rect.bottom;
 }
 
+/**
+ * Draw, and make where it landed the height to hold from now on.
+ *
+ * Called wherever the band is deliberately placed — its own keys, picking it up,
+ * pulling the window back, a scroll gera performed itself. Not from `sync`, which is
+ * the other direction: `sync` asks which line is at the held height, so letting it move
+ * that height would let the anchor follow the line it just found. Measured: four line
+ * scrolls walked the band 125px down the window, because each landing redefined the
+ * height the next probe used.
+ */
+function anchor(): void {
+  paint();
+  if (visible()) heldY = windowTop();
+}
+
 function paint(): void {
   if (!band || !host) return;
   const col = column();
@@ -193,11 +208,7 @@ function paint(): void {
     return;
   }
   band.hidden = false;
-  // Settled and on screen, so this is the height to hold through the next scroll the
-  // user asks for. A scroll gera performs itself comes through here too, which is
-  // right: the band moved with the text, and the new height is the one to hold.
-  heldY = windowTop();
-  band.style.top = `${heldY}px`;
+  band.style.top = `${windowTop()}px`;
   band.style.height = `${lineHeight}px`;
   band.style.left = `${col.left}px`;
   band.style.width = `${col.width}px`;
@@ -254,7 +265,7 @@ function step(dir: 1 | -1): void {
     if (dir > 0 ? line.top > from : line.top < from) {
       record(line.top, line.height);
       keepInView();
-      paint();
+      anchor();
       return;
     }
   }
@@ -267,7 +278,7 @@ function pickUp(): void {
   const line = lineAt(rect.top + 1);
   if (!line) return;
   record(line.top, line.height);
-  paint();
+  anchor();
 }
 
 /** Bring the window back to the tracker, without moving the tracker (§9-9). */
@@ -276,7 +287,7 @@ function pullBack(): void {
   if (!rect || !host) return;
   hold(200);
   host.scrollTop += windowTop() - (rect.top + rect.height / 3);
-  paint();
+  anchor();
 }
 
 /**
@@ -300,7 +311,9 @@ function onScroll(): void {
   // Either gera scrolled, or the tracker is off screen and stays where it is. Both keep
   // the line; only the band's place in the window changes.
   if (performance.now() < holdUntil || !attached) {
-    paint();
+    // gera scrolled, so the band travelled with the text and its new height is the one
+    // to hold. Off screen it holds nothing; `anchor` leaves the old value alone.
+    anchor();
     return;
   }
   clearTimeout(settleTimer);
@@ -367,21 +380,28 @@ export function afterJump(): void {
   // Off screen, the tracker stops following the window: paging around at the
   // destination must not throw away the position being kept (§9-11).
   attached = visible();
-  if (!attached) opts?.notify("トラッカーは画面の外にあります（↑↓ で戻る、Enter でここから読む）");
+  if (!attached) opts?.notify("トラッカーは画面の外にあります（Shift+↑↓ で戻る、Enter でここから読む）");
 }
 
 /**
  * Keys that belong to the tracker while it is on. Returns whether the key was taken.
  *
- * `PageUp` / `PageDown` are deliberately not taken: the webview scrolls, and the scroll
- * handler above moves the tracker into the destination. The same path serves the wheel
- * and the scrollbar, so all three behave alike without a case for each.
+ * Only `Shift+↑↓` (and `Shift+J` / `Shift+K`) move the band, plus `Enter` to pick it up
+ * again. Scrolling — a line, a page, the wheel, the scrollbar — is not taken here at
+ * all: the scroll handler above keeps the band at its height in the window, which is
+ * how the line it points at advances as the paper moves.
+ *
+ * That split is the owner's reading of it (2026-09-07): moving to the next line is one
+ * act with two ways to perform it — move the eye, or move the paper. The tracker's
+ * coordinate is a place in the window, independent of the paper, so both work and
+ * neither is the other. What is separated is whether the paper moves.
  */
 export function handleKey(e: KeyboardEvent): boolean {
   if (!on || e.isComposing || e.metaKey || e.ctrlKey || e.altKey) return false;
 
-  const down = e.key === "ArrowDown" || e.key === "j";
-  const up = e.key === "ArrowUp" || e.key === "k";
+  const key = e.key.toLowerCase();
+  const down = e.shiftKey && (key === "arrowdown" || key === "j");
+  const up = e.shiftKey && (key === "arrowup" || key === "k");
   if (down || up) {
     // Off screen, the first press only brings the window back — it does not move the
     // tracker. gera already asks for a second press once, when `Mod+R` would throw away
@@ -395,7 +415,7 @@ export function handleKey(e: KeyboardEvent): boolean {
 
   // `Enter` means "settle on this" inside the tools already (keys.ts), so reading it as
   // "start reading from here" adds no new idea.
-  if (e.key === "Enter" && !visible()) {
+  if (key === "enter" && !e.shiftKey && !visible()) {
     pickUp();
     e.preventDefault();
     return true;

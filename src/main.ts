@@ -794,7 +794,7 @@ async function toggleTracker(): Promise<void> {
   const ui = (tracker ??= await import("./tracker"));
   // tracker.css arrives late via the dynamic import (same reason as toggleOutline).
   raiseUserCss();
-  notify(ui.toggle(el, { notify }) ? "トラッカー: ON（↑↓ で移動）" : "トラッカー: OFF");
+  notify(ui.toggle(el, { notify }) ? "トラッカー: ON（Shift+↑↓ で移動）" : "トラッカー: OFF");
 }
 
 // ------------------------------------------------------- the key list (F1)
@@ -1219,19 +1219,20 @@ window.addEventListener("keydown", (e) => {
   // behind it.
   if (mode === "view" && !outline?.isOpen() && !find?.isOpen() && !keys?.isOpen()) {
     if (tracker?.handleKey(e)) return;
-    // With the tracker off, all four of `↑` `↓` `j` `k` scroll by one line.
+    // Unmodified `↑` `↓` `j` `k` scroll the paper by one line, whether or not the
+    // tracker is on (§9-11). Three movements are wanted and they are told apart by the
+    // modifier, not by the tracker's state: bare scrolls a line, `Mod` scrolls a page,
+    // `Shift` moves the tracker (handled above).
     //
-    // `j` / `k` are aliases of the arrow keys and not a mode of their own (§9-11), and
-    // the reason they exist — keyboards that need a modifier to reach the arrow keys —
-    // does not go away when the tracker is off. So they have to scroll here too.
+    // `j` / `k` are aliases of the arrow keys and not a mode of their own, and the
+    // reason they exist — keyboards that need a modifier to reach the arrow keys — has
+    // nothing to do with the tracker.
     //
     // The arrow keys are taken over rather than left to the webview, which was the
     // mistake in the first attempt: the webview scrolls by a fixed number of pixels,
     // which is not one line, so leaving it in place made the alias behave differently
     // from the key it is an alias of. Matching the webview's step instead would have
-    // kept both away from a line and stopped following `Mod +`. With the tracker on
-    // `↑↓` move one line, so off is the same unit — the tracker changes what moves,
-    // not how far.
+    // kept both away from a line and stopped following `Mod +`.
     if (!e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && !e.isComposing) {
       const down = e.key === "ArrowDown" || e.key === "j";
       const up = e.key === "ArrowUp" || e.key === "k";
@@ -1269,17 +1270,20 @@ window.addEventListener("keydown", (e) => {
   }
 
   // Turn a page without leaving the middle of the keyboard (the owner's request,
-  // 2026-09-07). `Mod+J` / `Mod+K` are a second spelling of `PageDown` / `PageUp`, just
-  // as `j` / `k` are a second spelling of the arrow keys, so they go through the very
-  // same function — the mistake worth not repeating is letting two spellings of one
-  // operation move by different amounts.
+  // 2026-09-07). `Mod+↑↓` and `Mod+J` / `Mod+K` are second spellings of `PageUp` /
+  // `PageDown`, just as `j` / `k` are second spellings of the arrow keys, so they go
+  // through the very same function — the mistake worth not repeating is letting two
+  // spellings of one operation move by different amounts.
   //
   // View mode only. The reason for it is reading, and in edit mode `PageUp` / `PageDown`
   // belong to CodeMirror, where they carry the cursor and not just the view.
-  if ((key === "j" || key === "k") && !e.shiftKey && mode === "view") {
-    e.preventDefault();
-    scrollViewByPage(key === "j" ? 1 : -1);
-    return;
+  if (mode === "view" && !e.shiftKey) {
+    const page = key === "j" || key === "arrowdown" ? 1 : key === "k" || key === "arrowup" ? -1 : 0;
+    if (page !== 0) {
+      e.preventDefault();
+      scrollViewByPage(page);
+      return;
+    }
   }
 
   // The reading tracker (§9-11).
