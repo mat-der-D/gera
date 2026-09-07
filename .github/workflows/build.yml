@@ -241,6 +241,26 @@ jobs:
       # `.md` の関連付けとメニュー登録をしてくれるのはこちらだけである。
       # AppImage は入れずに単体で動き、ディストリを選ばない——ただし
       # **glibc の下限からは逃げられない**（WebKitGTK は同梱するが libc はしない）。
+      # **gera 自身が取り込んでいる第三者コードの表示。**npm 38 件・crate 399 件、
+      # どれも MIT/Apache/BSD 系でコピーレフトは無いが、**いずれも著作権表示の
+      # 同梱を求めている。**中身はロックファイルから決まるので、
+      # THIRD-PARTY-LICENSES.txt をコミットしてあり、ここでは作り直して
+      # **食い違ったら落とす**（依存を足したまま表示を更新し忘れるのを防ぐ）。
+      # 直し方は差分と一緒に出る。
+      #
+      # AppImage が同梱する OS 側のライブラリ（LGPL）は別の話で、そちらは
+      # 次の後始末の工程が扱う。
+      - name: Check THIRD-PARTY-LICENSES.txt is up to date
+        run: |
+          node .github/scripts/gen-third-party-licenses.mjs
+          if ! git diff --quiet -- THIRD-PARTY-LICENSES.txt; then
+            echo '::error::THIRD-PARTY-LICENSES.txt が依存と合っていない。'\
+                 'ローカルで node .github/scripts/gen-third-party-licenses.mjs'\
+                 'を回してコミットすること。'
+            git --no-pager diff --stat -- THIRD-PARTY-LICENSES.txt
+            exit 1
+          fi
+
       - name: Build (deb + AppImage)
         run: npm run tauri -- build --bundles deb,appimage
 
@@ -277,6 +297,7 @@ jobs:
           path: |
             src-tauri/target/release/bundle/appimage/*.AppImage
             src-tauri/target/release/bundle/appimage/THIRD-PARTY-LICENSES-linux.txt
+            src-tauri/target/release/bundle/appimage/THIRD-PARTY-LICENSES.txt
           if-no-files-found: error
 
   # タグ（v*）のときだけ Releases に置く。**下書きのまま置く**——
@@ -314,6 +335,7 @@ jobs:
             artifacts/gera-linux-deb/*.deb
             artifacts/gera-linux-appimage/*.AppImage
             artifacts/gera-linux-appimage/THIRD-PARTY-LICENSES-linux.txt
+            artifacts/gera-linux-appimage/THIRD-PARTY-LICENSES.txt
           body: |
             ## Windows 版
 
@@ -358,6 +380,18 @@ jobs:
 
             - `gera_*_amd64.deb` — Ubuntu/Debian 系向け。`sudo apt install ./gera_*_amd64.deb` で入る。**`.md` の関連付けとメニュー登録が付くのはこちら**
             - `gera_*_amd64.AppImage` — 入れずに単体で動く。ディストリを選ばない。**落としたあと `chmod +x` が要る**（Release の資産は実行権限を保存しない）
-            - `THIRD-PARTY-LICENSES-linux.txt` — AppImage が同梱しているライブラリの利用条件。**AppImage は WebKitGTK・GTK3・glib・cairo・pango・libsoup を同梱していて、これらは LGPL である**ため、全文とソースの入手先を添えてある。同じものが AppImage の中の `usr/share/doc/gera/` にも入っている。deb はライブラリを同梱せずディストリのものを使うので、こちらには付かない
+            - `THIRD-PARTY-LICENSES-linux.txt` — AppImage が同梱している **OS 側のライブラリ**の利用条件。**AppImage は WebKitGTK・GTK3・glib・cairo・pango・libsoup を同梱していて、これらは LGPL である**ため、全文とソースの入手先を添えてある。deb はライブラリを同梱せずディストリのものを使うので、こちらには要らない
 
             x86_64 のみである（ARM 版は作っていない）。
+
+            ## 著作権表示
+
+            `THIRD-PARTY-LICENSES.txt` — **gera 自身が取り込んでいる第三者コード**
+            （npm パッケージ 38 件、Rust の crate 399 件）の著作権表示。
+            **コピーレフトのものは無く、すべて MIT・Apache-2.0・BSD 系である。**
+            gera 本体は MIT で、その本文はリポジトリの LICENSE にある。
+
+            これは Windows 版・macOS 版・Linux 版のどれにも当てはまる
+            （crate は配る4つのターゲットぶんを足し合わせてある）。
+            Linux の AppImage には、上の `THIRD-PARTY-LICENSES-linux.txt` と
+            合わせて `usr/share/doc/gera/` に入れてある。

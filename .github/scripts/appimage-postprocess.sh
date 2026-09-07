@@ -18,7 +18,9 @@ repo=$(cd "$here/../.." && pwd)
 bundle="$repo/src-tauri/target/release/bundle/appimage"
 appdir="$bundle/gera.AppDir"
 recorded="$here/appimage-bundled-packages.txt"
-notice_name="THIRD-PARTY-LICENSES.txt"
+# OS 側の共有ライブラリぶん。gera 自身の依存ぶん
+# （THIRD-PARTY-LICENSES.txt）とは別のファイルである。
+notice_name="THIRD-PARTY-LICENSES-linux.txt"
 
 [ -d "$appdir" ] || { echo "AppDir が無い: $appdir" >&2; exit 1; }
 
@@ -140,9 +142,7 @@ echo "同梱パッケージ $(wc -l < "$actual") 件 — 記録の範囲内"
 # ---------------------------------------------------------------------------
 # 3. 条件の書き出し
 # ---------------------------------------------------------------------------
-# Release の資産としては、どの OS のものか分かる名前で出す。
-# AppImage の中では、場所で分かるので素の名前でよい。
-notice="$bundle/THIRD-PARTY-LICENSES-linux.txt"
+notice="$bundle/$notice_name"
 {
   cat <<'HEADER'
 ================================================================================
@@ -222,6 +222,15 @@ rm -f "$actual"
 # ファイル一つだけを受け取った人がそのまま条件を読めるようにするため。
 install -Dm644 "$notice" "$appdir/usr/share/doc/gera/$notice_name"
 install -Dm644 "$repo/LICENSE" "$appdir/usr/share/doc/gera/LICENSE"
+# gera 自身が取り込んでいる第三者コードの表示（npm・crate）。
+# こちらは gen-third-party-licenses.mjs が作ってコミットしてあるもので、
+# 上の OS 側ライブラリの話とは別。
+install -Dm644 "$repo/THIRD-PARTY-LICENSES.txt" \
+  "$appdir/usr/share/doc/gera/THIRD-PARTY-LICENSES.txt"
+# Release の資産としても出す。**upload-artifact は複数のパスを渡すと
+# 共通の親から下の構造をそのまま残す**ので、リポジトリの根から直接
+# 上げずに、ここへ置いてから一つのディレクトリとして上げる。
+cp "$repo/THIRD-PARTY-LICENSES.txt" "$bundle/THIRD-PARTY-LICENSES.txt"
 echo "条件を書き出した: $notice ($(wc -l < "$notice") 行)"
 
 # ---------------------------------------------------------------------------
