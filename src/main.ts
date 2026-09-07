@@ -491,9 +491,10 @@ function viewerElement(): HTMLElement {
  * Scroll the view by one line. What `j` / `k` do while the tracker is off.
  *
  * One line means one line of the text column, taken from its computed `line-height`.
- * The webview's own arrow-key step is a fixed number of pixels and does not follow the
- * font size, so matching it would drift from "one line" as soon as `Mod +` is pressed.
- * `line-height: normal` computes to a keyword rather than a length, hence the fallback.
+ * The webview's own arrow-key step is a fixed number of pixels — not a line, and it
+ * does not follow the font size — which is why the arrow keys are handled here rather
+ * than left to it. `line-height: normal` computes to a keyword rather than a length,
+ * hence the fallback.
  */
 function scrollViewByLine(dir: 1 | -1): void {
   if (!scroller) return;
@@ -1198,15 +1199,24 @@ window.addEventListener("keydown", (e) => {
   // behind it.
   if (mode === "view" && !outline?.isOpen() && !find?.isOpen() && !keys?.isOpen()) {
     if (tracker?.handleKey(e)) return;
-    // With the tracker off, `j` / `k` still have to scroll, because they are aliases of
-    // the arrow keys and not a mode of their own (§9-11). The reason they exist —
-    // keyboards that need a modifier to reach the arrow keys — does not go away when
-    // the tracker is off; binding them only while it is on would take the one-line
-    // scroll away from exactly the people the aliases are for. The arrow keys
-    // themselves need nothing here: the webview scrolls with them already.
+    // With the tracker off, all four of `↑` `↓` `j` `k` scroll by one line.
+    //
+    // `j` / `k` are aliases of the arrow keys and not a mode of their own (§9-11), and
+    // the reason they exist — keyboards that need a modifier to reach the arrow keys —
+    // does not go away when the tracker is off. So they have to scroll here too.
+    //
+    // The arrow keys are taken over rather than left to the webview, which was the
+    // mistake in the first attempt: the webview scrolls by a fixed number of pixels,
+    // which is not one line, so leaving it in place made the alias behave differently
+    // from the key it is an alias of. Matching the webview's step instead would have
+    // kept both away from a line and stopped following `Mod +`. With the tracker on
+    // `↑↓` move one line, so off is the same unit — the tracker changes what moves,
+    // not how far.
     if (!e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && !e.isComposing) {
-      if (e.key === "j" || e.key === "k") {
-        scrollViewByLine(e.key === "j" ? 1 : -1);
+      const down = e.key === "ArrowDown" || e.key === "j";
+      const up = e.key === "ArrowUp" || e.key === "k";
+      if (down || up) {
+        scrollViewByLine(down ? 1 : -1);
         e.preventDefault();
         return;
       }
