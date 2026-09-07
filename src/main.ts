@@ -1233,16 +1233,23 @@ window.addEventListener("keydown", (e) => {
     // which is not one line, so leaving it in place made the alias behave differently
     // from the key it is an alias of. Matching the webview's step instead would have
     // kept both away from a line and stopped following `Mod +`.
-    if (!e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && !e.isComposing) {
-      const down = e.key === "ArrowDown" || e.key === "j";
-      const up = e.key === "ArrowUp" || e.key === "k";
+    //
+    // `Shift` is accepted here as well. With the tracker on it never gets this far —
+    // the tracker took it above — so this is the case where there is no band to move.
+    // Rather than doing nothing, it does what the key without `Shift` does: a key that
+    // silently stops working depending on a state elsewhere on screen is worse than one
+    // that keeps a sensible meaning (the owner's instruction, 2026-09-07).
+    if (!e.metaKey && !e.ctrlKey && !e.altKey && !e.isComposing) {
+      const key = e.key.toLowerCase();
+      const down = key === "arrowdown" || key === "j";
+      const up = key === "arrowup" || key === "k";
       if (down || up) {
         scrollViewByLine(down ? 1 : -1);
         e.preventDefault();
         return;
       }
-      if (e.key === "PageDown" || e.key === "PageUp") {
-        scrollViewByPage(e.key === "PageDown" ? 1 : -1);
+      if (key === "pagedown" || key === "pageup") {
+        scrollViewByPage(key === "pagedown" ? 1 : -1);
         e.preventDefault();
         return;
       }
