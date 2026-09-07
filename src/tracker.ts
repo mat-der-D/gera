@@ -59,6 +59,29 @@ let lineHeight = 0;
 let holdUntil = 0;
 let settleTimer = 0;
 
+/**
+ * Whether the tracker is coupled to the window — that is, whether it was on screen the
+ * last time it settled.
+ *
+ * It cannot be worked out at the moment a scroll is reported. Scroll events are
+ * delivered after the fact, so by then a tracker that was on screen has already been
+ * carried off it, and asking "is it visible?" there answers for the state after the
+ * scroll rather than the state that decides what the scroll means. Measured: PageDown
+ * made the band disappear instead of taking the line that arrived at its height.
+ */
+let attached = false;
+
+/**
+ * The height in the window the band is holding.
+ *
+ * It has to be remembered rather than recomputed, for the same reason `attached` does:
+ * by the time a scroll is reported the band has already been carried away from the
+ * height it was holding, so asking where it is answers with where the scroll put it.
+ * Measured: after a PageDown the held height came out as -413px — off the top of the
+ * window — and nothing could be found there to land on.
+ */
+let heldY = 0;
+
 function hold(ms: number): void {
   holdUntil = Math.max(holdUntil, performance.now() + ms);
 }
@@ -83,6 +106,21 @@ function column(): DOMRect | null {
  * right answer: the block is the unit being read.
  */
 function lineAt(y: number): { top: number; height: number } | null {
+  // A point can land between two blocks — the margin above a paragraph, the air around
+  // a heading. What answers there is the nearest text, whose rectangle does not contain
+  // the point at all, and taking it would leave the band sitting on blank space
+  // (measured: PageDown put it in the gap under a heading). So a rectangle counts only
+  // if it contains the point that produced it, and otherwise the probe walks down until
+  // one does. Walking down and not up is what "the line that arrived at this height"
+  // means: a gap arriving is the next line arriving.
+  for (let d = 0; d <= 96; d += 4) {
+    const rect = probe(y + d);
+    if (rect && rect.top <= y + d && rect.top + rect.height >= y + d) return rect;
+  }
+  return probe(y);
+}
+
+function probe(y: number): { top: number; height: number } | null {
   const col = column();
   if (!col) return null;
   const x = col.left + col.width / 2;
@@ -116,6 +154,7 @@ function record(top: number, height: number): void {
   const rect = host?.getBoundingClientRect();
   docTop = top - (rect ? rect.top : 0) + (host?.scrollTop ?? 0);
   lineHeight = height;
+  attached = true;
 }
 
 /** Whether the tracked line is inside the window. Drift means this is false. */
@@ -134,7 +173,11 @@ function paint(): void {
     return;
   }
   band.hidden = false;
-  band.style.top = `${windowTop()}px`;
+  // Settled and on screen, so this is the height to hold through the next scroll the
+  // user asks for. A scroll gera performs itself comes through here too, which is
+  // right: the band moved with the text, and the new height is the one to hold.
+  heldY = windowTop();
+  band.style.top = `${heldY}px`;
   band.style.height = `${lineHeight}px`;
   band.style.left = `${col.left}px`;
   band.style.width = `${col.width}px`;
@@ -226,8 +269,7 @@ function pullBack(): void {
  * (§5-2). The intermediate positions of a scroll are not read by anyone.
  */
 function sync(): void {
-  const held = windowTop();
-  const line = lineAt(held + lineHeight / 2);
+  const line = lineAt(heldY + lineHeight / 2);
   if (!line) return;
   record(line.top, line.height);
   paint();
@@ -237,7 +279,7 @@ function onScroll(): void {
   if (!on) return;
   // Either gera scrolled, or the tracker is off screen and stays where it is. Both keep
   // the line; only the band's place in the window changes.
-  if (performance.now() < holdUntil || !visible()) {
+  if (performance.now() < holdUntil || !attached) {
     paint();
     return;
   }
@@ -277,6 +319,7 @@ export function toggle(scroller: HTMLElement, options: TrackerOptions): boolean 
 export function off(): void {
   if (!on) return;
   on = false;
+  attached = false;
   clearTimeout(settleTimer);
   host?.removeEventListener("scroll", onScroll);
   window.removeEventListener("resize", onResize);
@@ -301,7 +344,10 @@ export function afterJump(): void {
   // jump just performed is reported. 500 ms covers `settle`'s second pass as well.
   hold(500);
   paint();
-  if (!visible()) opts?.notify("トラッカーは画面の外にあります（↑↓ で戻る、Enter でここから読む）");
+  // Off screen, the tracker stops following the window: paging around at the
+  // destination must not throw away the position being kept (§9-11).
+  attached = visible();
+  if (!attached) opts?.notify("トラッカーは画面の外にあります（↑↓ で戻る、Enter でここから読む）");
 }
 
 /**
