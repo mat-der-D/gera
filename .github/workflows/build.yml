@@ -1,6 +1,8 @@
-# Windows 版と macOS 版のビルド。開発機は Linux（Ubuntu 24.04）で、どちらも
-# クロスコンパイルできない——`windows-latest` と `macos-latest` を回すのが
-# 唯一の実用的な経路である（docs/DESIGN.md 第 13 節）。
+# Windows 版・macOS 版・Linux 版のビルド。開発機は Linux（Ubuntu 24.04）で、
+# Windows と macOS はどちらもクロスコンパイルできない——`windows-latest` と
+# `macos-latest` を回すのが唯一の実用的な経路である（docs/DESIGN.md 第 13 節）。
+# **Linux 版だけは手元でも作れる**が、渡すときに三 OS 分が同じ下書きリリースに
+# 揃っているほうが楽なので、ここでも作る。
 #
 # 当面の目的は配布ではなく、**実機で試せる人に渡すこと**である
 # （IME・フォント・`.md` の関連付け・`user.css` の置き場・`Mod+,` が第 15 節に
@@ -172,10 +174,98 @@ jobs:
           path: gera-macos-universal.app.zip
           if-no-files-found: error
 
+  # Linux 版。**開発機が Linux なので、ここでしか作れないものは何も無い。**
+  # それでも Actions で作る理由は二つある——タグを打ったとき三 OS 分が揃って
+  # 同じ下書きリリースに載ること、それと手元の環境に依存しない再現性である。
+  linux:
+    # **`ubuntu-latest` にしない。**Linux のバイナリは、**組んだ機械の glibc より
+    # 古い環境では起動しない。**`ubuntu-latest` が指す先が上がると、渡せる相手が
+    # 黙って減る。固定して、上げるときは意識して上げる。
+    #
+    # **24.04 の glibc は 2.39 である。**つまりこの成果物が動くのは
+    # **Ubuntu 24.04 以降・Debian 13 以降**で、Ubuntu 22.04 では動かない。
+    # 22.04 の runner を使えばそちらに合わせられるが、**その image は
+    # 2026-09-17 に非推奨化が始まり（ジョブが意図的に落とされる期間がある）、
+    # 2027-04-17 に完全に消える**ので、新規に選ぶ先ではない。
+    # もっと古い環境に配る必要が出たら、runner ではなく
+    # `container: ubuntu:22.04` を使う（container の寿命は runner image とは別）。
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # WebKitGTK 4.1 は runner に入っていない。Tauri v2 の Linux ビルドは
+      # これに対して組む（4.0 ではない）。patchelf は AppImage の側で要る。
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libxdo-dev \
+            libssl-dev \
+            patchelf \
+            build-essential file
+
+      # 版は Windows・macOS 側と同じものに固定する（上のコメント参照）。
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '23.8.0'
+          cache: npm
+
+      - name: Install Rust 1.97.0
+        run: |
+          rustup toolchain install 1.97.0 --profile minimal --no-self-update
+          rustup default 1.97.0
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Show tool versions
+        run: |
+          node --version
+          npm --version
+          rustc --version
+          ldd --version | head -1
+
+      - run: npm ci
+
+      # **`--bundles` を明示する。**tauri.conf.json の targets に appimage が
+      # 無いので、既定では deb しか出ない。カンマ区切りは bash では化けない
+      # （化けたのは Windows の cmd.exe である。macOS のジョブのコメント参照）。
+      #
+      # **二つ作るのは、届く範囲が違うからである。**deb は Ubuntu/Debian 系専用だが、
+      # `.md` の関連付けとメニュー登録をしてくれるのはこちらだけである。
+      # AppImage は入れずに単体で動き、ディストリを選ばない——ただし
+      # **glibc の下限からは逃げられない**（WebKitGTK は同梱するが libc はしない）。
+      - name: Build (deb + AppImage)
+        run: npm run tauri -- build --bundles deb,appimage
+
+      - name: List bundle output
+        run: ls -lR src-tauri/target/release/bundle
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: gera-linux-deb
+          path: src-tauri/target/release/bundle/deb/*.deb
+          if-no-files-found: error
+
+      # **AppImage は実行ビットが落ちる。**アーティファクトも Release の資産も
+      # パーミッションを保存しないため、受け取った側は必ず `chmod +x` が要る。
+      # リリース本文にその一行を書いてある。
+      - uses: actions/upload-artifact@v7
+        with:
+          name: gera-linux-appimage
+          path: src-tauri/target/release/bundle/appimage/*.AppImage
+          if-no-files-found: error
+
   # タグ（v*）のときだけ Releases に置く。**下書きのまま置く**——
   # 中身を本人が確かめてから公開する（勝手に公開しない）。
   release:
-    needs: [windows, macos]
+    needs: [windows, macos, linux]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
@@ -204,6 +294,8 @@ jobs:
             artifacts/gera-windows-exe/gera.exe
             artifacts/gera-macos-dmg/*.dmg
             artifacts/gera-macos-app/gera-macos-universal.app.zip
+            artifacts/gera-linux-deb/*.deb
+            artifacts/gera-linux-appimage/*.AppImage
           body: |
             ## Windows 版
 
@@ -241,3 +333,12 @@ jobs:
 
             **macOS 版はまだ誰も実機で動かしていない。**確かめるべき項目は
             README の「macOS で確かめること」と docs/DESIGN.md 第 15 節にある。
+
+            ## Linux 版
+
+            **Ubuntu 24.04 以降（glibc 2.39 以降）が要る。**22.04 では起動しない。
+
+            - `gera_*_amd64.deb` — Ubuntu/Debian 系向け。`sudo apt install ./gera_*_amd64.deb` で入る。**`.md` の関連付けとメニュー登録が付くのはこちら**
+            - `gera_*_amd64.AppImage` — 入れずに単体で動く。ディストリを選ばない。**落としたあと `chmod +x` が要る**（Release の資産は実行権限を保存しない）
+
+            x86_64 のみである（ARM 版は作っていない）。

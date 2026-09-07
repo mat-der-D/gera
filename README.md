@@ -58,15 +58,15 @@ Rust 側の責務はファイル入出力、ダイアログ、ウィンドウ状
 
 **初版の要件は揃った**（実装順序 1〜9 完了。[docs/DESIGN.md](docs/DESIGN.md) 第 12 節）。閲覧・編集の両モード、数式、コマンドライン引数とファイル関連付け、アウトライン、文書内検索、ユーザー CSS、外部変更への追随、キー一覧（`F1`）まで入っている。
 
-**残るのは配布と、Linux 以外の実機での確認である。**Windows 版と macOS 版は GitHub Actions で毎回組んでいるが（`.github/workflows/build.yml`）、**実機で動かして確かめてはいない**（第 15 節）。
+**残るのは配布と、Linux 以外の実機での確認である。**Windows 版・macOS 版・Linux 版を GitHub Actions で毎回組んでいるが（`.github/workflows/build.yml`）、**Windows と macOS は実機で動かして確かめてはいない**（第 15 節）。
 
 初版に入れない機能（Mermaid、シンタックスハイライト、ファイル横断検索など）は**後から足すつもりのものであって、却下したものではない。**
 
 設計の詳細・実測値・判断の根拠は [docs/DESIGN.md](docs/DESIGN.md) にある。
 
-## Windows 版・macOS 版
+## 配布物（Windows・macOS・Linux）
 
-**GitHub Actions（`windows-latest` / `macos-latest`）でビルドしている。**開発機が Linux のため、どちらもここでしか作れない。
+**GitHub Actions でビルドしている。**Windows と macOS は開発機が Linux のためここでしか作れない。**Linux 版は手元でも作れるが、渡すときに三 OS 分が揃っているほうが楽なので、同じところで作っている。**
 
 - **試用版**——[Actions](../../actions/workflows/build.yml) の最新の実行を開いてアーティファクトを落とす。**GitHub にログインしていないと落とせない**
 - **公開版**——[Releases](../../releases)。タグを打つと下書きができ、確認してから公開する
@@ -75,8 +75,11 @@ Rust 側の責務はファイル入出力、ダイアログ、ウィンドウ状
 |---|---|
 | Windows | `gera-windows-installer`（インストーラ）/ `gera-windows-exe`（素の実行ファイル） |
 | macOS | `gera-macos-dmg`（ディスクイメージ）/ `gera-macos-app`（素のアプリ。zip） |
+| Linux | `gera-linux-deb`（Ubuntu/Debian 系）/ `gera-linux-appimage`（入れずに動く単体ファイル） |
 
 **macOS 版はユニバーサルバイナリである**——Apple Silicon と Intel の両方で動く。
+
+**Linux 版は x86_64 のみで、Ubuntu 24.04 以降（glibc 2.39 以降）が要る。**22.04 では起動しない——**Linux のバイナリは、組んだ機械の glibc より古い環境では動かない**ためで、AppImage でもここは変わらない（WebKitGTK は同梱するが libc はしない）。`.md` の関連付けとメニュー登録が付くのは deb のほうである。AppImage は落としたあと `chmod +x` が要る。
 
 ### 署名していない
 
@@ -89,6 +92,8 @@ Rust 側の責務はファイル入出力、ダイアログ、ウィンドウ状
 3. もう一度警告が出るので**「開く」**を押す
 
 以降は普通に開ける。**右クリック →「開く」は macOS 15 (Sequoia) 以降では通らない**（Apple が塞いだ。古い macOS では通る）。端末から外す `xattr -d com.apple.quarantine /Applications/gera.app` は**未検証**。
+
+**Linux**——署名の仕組みが無いので、警告も回避手順も無い。deb はそのまま入り、AppImage は `chmod +x` して実行するだけである。
 
 ### ユーザー CSS の置き場
 
