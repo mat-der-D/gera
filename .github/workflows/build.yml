@@ -244,6 +244,21 @@ jobs:
       - name: Build (deb + AppImage)
         run: npm run tauri -- build --bundles deb,appimage
 
+      # **AppImage だけ後始末が要る。**deb は `Depends:` を書くだけで
+      # 共有ライブラリを一つも再配布しないが、**AppImage は同梱する。**
+      # 同梱したものの条件が、そのまま gera の配布条件になる。
+      #
+      # ここで三つやる。**(a)** 使ってもいない経路からぶら下がってくる GPL の
+      # ライブラリ（libjbig・libltdl）を落とす、**(b)** 残った 120 個ぶんの
+      # 条件を全文で書き出す（LGPL は全文と入手先の提示が要る）、
+      # **(c)** AppDir を詰め直す。
+      #
+      # **同梱されるパッケージが増えたら、この工程が落ちる。**条件を
+      # 確かめないまま配ることを防ぐための関門で、記録は
+      # .github/scripts/appimage-bundled-packages.txt にある。
+      - name: Trim GPL libraries and write licence notices (AppImage)
+        run: ./.github/scripts/appimage-postprocess.sh
+
       - name: List bundle output
         run: ls -lR src-tauri/target/release/bundle
 
@@ -259,7 +274,9 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: gera-linux-appimage
-          path: src-tauri/target/release/bundle/appimage/*.AppImage
+          path: |
+            src-tauri/target/release/bundle/appimage/*.AppImage
+            src-tauri/target/release/bundle/appimage/THIRD-PARTY-LICENSES-linux.txt
           if-no-files-found: error
 
   # タグ（v*）のときだけ Releases に置く。**下書きのまま置く**——
@@ -296,6 +313,7 @@ jobs:
             artifacts/gera-macos-app/gera-macos-universal.app.zip
             artifacts/gera-linux-deb/*.deb
             artifacts/gera-linux-appimage/*.AppImage
+            artifacts/gera-linux-appimage/THIRD-PARTY-LICENSES-linux.txt
           body: |
             ## Windows 版
 
@@ -340,5 +358,6 @@ jobs:
 
             - `gera_*_amd64.deb` — Ubuntu/Debian 系向け。`sudo apt install ./gera_*_amd64.deb` で入る。**`.md` の関連付けとメニュー登録が付くのはこちら**
             - `gera_*_amd64.AppImage` — 入れずに単体で動く。ディストリを選ばない。**落としたあと `chmod +x` が要る**（Release の資産は実行権限を保存しない）
+            - `THIRD-PARTY-LICENSES-linux.txt` — AppImage が同梱しているライブラリの利用条件。**AppImage は WebKitGTK・GTK3・glib・cairo・pango・libsoup を同梱していて、これらは LGPL である**ため、全文とソースの入手先を添えてある。同じものが AppImage の中の `usr/share/doc/gera/` にも入っている。deb はライブラリを同梱せずディストリのものを使うので、こちらには付かない
 
             x86_64 のみである（ARM 版は作っていない）。
