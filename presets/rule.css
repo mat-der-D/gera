@@ -1,0 +1,29 @@
+/* 罫線のトラッカー。読んでいる行の下に線を一本引く。
+ *
+ * 何をするものか: トラッカー（Ctrl+L）の見た目を、行に敷く帯から
+ * **行の下の一本線**に替える。定規を当てて読むのに一番近い形である
+ * （設計文書 9-9 の「罫線」）。
+ *
+ * **帯より邪魔をしない。**地色を敷かないので、コードブロックの地や表の縞と
+ * 重ならず、文字の色も変わらない。**そのぶん目立たない**ので、送っている
+ * 途中で見失いやすい人には帯のほうが向く。
+ *
+ * 使い方: このファイルを `user.css` という名前で次の場所へ置く。
+ *   Linux   ~/.config/dev.smoothpudding.gera/user.css
+ *   Windows %APPDATA%\dev.smoothpudding.gera\user.css
+ *   macOS   ~/Library/Application Support/dev.smoothpudding.gera/user.css
+ * 置いたあと gera で Ctrl+,（macOS は Cmd+,）を押せば、起動し直さずに反映される。
+ * 二つ以上のプリセットを使いたければ、中身をつなげて一つの user.css にすればよい。
+ */
+
+.gera-tracker {
+  /* 地を敷かない。線だけにする。 */
+  background: transparent;
+
+  /* **要素の高さは行の高さそのものである**（gera が測って直に書き込む。
+     docs/CSS.md）。したがって下の枠線は、ちょうど読んでいる行の下に来る。
+     太さと色はここで決める。2px より細いと、拡大していないとき見失いやすい。 */
+  border-bottom: 2px solid color-mix(in srgb, var(--accent) 70%, transparent);
+
+  border-radius: 0;
+}

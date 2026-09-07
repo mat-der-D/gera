@@ -13,7 +13,8 @@
  * 使い方: このファイルを `user.css` という名前で次の場所へ置く。
  *   Linux   ~/.config/dev.smoothpudding.gera/user.css
  *   Windows %APPDATA%\dev.smoothpudding.gera\user.css
- * 置いたあと gera で Ctrl+, を押せば、起動し直さずに反映される。
+ *   macOS   ~/Library/Application Support/dev.smoothpudding.gera/user.css
+ * 置いたあと gera で Ctrl+,（macOS は Cmd+,）を押せば、起動し直さずに反映される。
  * 二つ以上のプリセットを使いたければ、中身をつなげて一つの user.css にすればよい。
  * 書体を変える gothic.css と組み合わせても衝突しない（触っている変数が違う）。
  */
