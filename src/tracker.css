@@ -1,0 +1,24 @@
+/*
+ * The reading tracker (§9-11). One element, painted behind the text.
+ *
+ * Only the current-line highlight is built for now (axis 4, the owner's call on
+ * 2026-09-07). Focus mode is the same element with `background: transparent`, an
+ * outer shadow of `0 0 0 100vh` and a `z-index` above the text (§9-9), so switching
+ * the look is a matter of CSS, not of another implementation.
+ */
+.gera-tracker {
+  position: fixed;
+  /* Behind the text. `.gera-doc` carries no z-index, so a negative value here would
+     drop it behind the page background as well; 0 with the text left to paint on top
+     of it keeps the characters sharp. */
+  z-index: 0;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--accent) 11%, transparent);
+  border-radius: 3px;
+  /* The band spans the text column, so it is a few characters wider than the line
+     itself. That is what makes it read as a rule under the line rather than as a
+     selection of the words. */
+  margin: 0 -0.35em;
+  padding: 0 0.35em;
+  box-sizing: content-box;
+}

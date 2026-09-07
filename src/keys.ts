@@ -81,6 +81,7 @@ const GROUPS: Group[] = [
       { key: `${MOD}+E`, desc: "閲覧 ⇄ 編集の切り替え" },
       { key: `${MOD}+Shift+O`, desc: "見出しへ飛ぶ" },
       { key: `${MOD}+F`, desc: "文書内を探す" },
+      { key: `${MOD}+L`, desc: "トラッカー（読んでいる行に帯）" },
       { key: `${MOD}+ + / − / 0`, desc: "字の大きさ" },
       { key: `${MOD}+,`, desc: "ユーザー CSS を読み直す" },
       { key: `${MOD}+Shift+C`, desc: "本文全体をクリップボードへ" },
@@ -94,6 +95,14 @@ const GROUPS: Group[] = [
       { key: "Enter", desc: "選んだ見出しへ飛ぶ／次の当たりへ" },
       { key: "Shift+Enter", desc: "前の当たりへ" },
       { key: "Esc", desc: "閉じる" },
+    ],
+  },
+  {
+    title: "トラッカーが出ているとき",
+    rows: [
+      { key: "↑ ↓ / j k", desc: "読んでいる行を動かす" },
+      { key: "PageUp / PageDown", desc: "画面を送る（帯は画面の同じ高さに残る）" },
+      { key: "Enter", desc: "画面の外に離れた帯を、いま見ている先頭行へ" },
     ],
   },
   {

@@ -466,6 +466,7 @@ function onLinkClick(e: MouseEvent): void {
     const id = decodeURIComponent(href.slice(1));
     if (!scroller) return;
     if (!viewer.scrollToAnchor(scroller, id)) notify(`この文書に見出し「${id}」がありません`);
+    else tracker?.afterJump();
     return;
   }
 
@@ -514,6 +515,11 @@ function enterView(line: number): void {
   // gain is small, but there is no reason not to do it either.
   const fresh = !shown;
   shown = true;
+  // The text is about to be replaced, and the tracker's position is a distance measured
+  // against the old layout. Carrying it over would put the band on a line nobody chose,
+  // so a reload or a newly opened file leaves the tracker off (§9-11). Coming back from
+  // edit mode it is already off (enterEdit).
+  tracker?.off();
   viewer.renderInto(el, text);
   if (line > 0 || !fresh) viewer.scrollToLine(el, line);
   // The key list for an empty document lives inside the edit-mode container.
@@ -555,6 +561,9 @@ async function enterEdit(): Promise<void> {
   const app = appElement();
   const line = shown && scroller ? viewer.topLine(scroller) : 0;
   const v = await ensureEditor(app);
+  // The tracker is measured against a layout that is about to leave the screen, and
+  // its keys belong to the text in edit mode. Both say to drop it here (§9-11).
+  tracker?.off();
   if (scroller) scroller.hidden = true;
   app.hidden = false;
   mode = "edit";
@@ -618,6 +627,8 @@ function restoreLine(line: number): void {
  */
 function jumpToLine(line: number): void {
   restoreLine(line);
+  // A jump moves the view only; the tracker keeps the place being read (§9-9 axis 3).
+  tracker?.afterJump();
   focusCurrent();
 }
 
@@ -715,6 +726,39 @@ async function toggleFind(): Promise<void> {
     clear: ui.clearInView,
     restore: focusCurrent,
   });
+}
+
+/**
+ * The reading tracker (§9-11). Toggled with `Mod+L`.
+ *
+ * View mode only, and off on every launch. The friend asked for it (§9-9 (c)); the
+ * owner settled the keys on 2026-09-07. While it is on, the arrow keys move the band
+ * and the view is carried by `PageUp` / `PageDown`, so turning it on takes the
+ * one-line scroll away — which is why it has to be possible to turn it off again.
+ *
+ * `Mod+L` has no precedent: nothing has one. Typora's focus mode is `F8`, iA Writer is
+ * `Cmd+D` on Mac but `Ctrl+Shift+D` on Windows, and Immersive Reader's line focus and
+ * VS Code's current-line highlight have no key at all. So the choice falls back on
+ * gera's own arrangement — commands live under `Mod+…`, and `F1` is unmodified only
+ * because "help" is spelled `F1` everywhere, which `F8` cannot claim.
+ *
+ * The module is loaded on the first press, like the heading list and find. The path of
+ * launching and just reading never loads it.
+ */
+let tracker: typeof import("./tracker") | null = null;
+
+async function toggleTracker(): Promise<void> {
+  if (mode !== "view") {
+    // Unmodified keys belong to the text in edit mode, so the band would have no way to
+    // be moved. Say so rather than turning on something that cannot be operated.
+    notify("トラッカーは閲覧モードで使えます");
+    return;
+  }
+  const el = viewerElement();
+  const ui = (tracker ??= await import("./tracker"));
+  // tracker.css arrives late via the dynamic import (same reason as toggleOutline).
+  raiseUserCss();
+  notify(ui.toggle(el, { notify }) ? "トラッカー: ON（↑↓ で移動）" : "トラッカー: OFF");
 }
 
 // ------------------------------------------------------- the key list (F1)
@@ -1133,6 +1177,14 @@ window.addEventListener("keydown", (e) => {
     return;
   }
 
+  // The tracker owns the unmodified arrow keys, `j` / `k` and `Enter` while it is on
+  // (§9-11). It is asked before the gate below, since none of its keys carry a
+  // modifier. While a tool is open those keys belong to the tool, not to the text
+  // behind it.
+  if (mode === "view" && !outline?.isOpen() && !find?.isOpen() && !keys?.isOpen()) {
+    if (tracker?.handleKey(e)) return;
+  }
+
   if (!(e.metaKey || e.ctrlKey) || e.altKey || e.isComposing) return;
   const key = e.key.toLowerCase();
 
@@ -1150,6 +1202,13 @@ window.addEventListener("keydown", (e) => {
   if (key === "o" && e.shiftKey) {
     e.preventDefault();
     run("見出しの一覧", toggleOutline);
+    return;
+  }
+
+  // The reading tracker (§9-11).
+  if (key === "l") {
+    e.preventDefault();
+    run("トラッカーの切り替え", toggleTracker);
     return;
   }
 
