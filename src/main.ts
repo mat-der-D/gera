@@ -496,11 +496,31 @@ function viewerElement(): HTMLElement {
  * than left to it. `line-height: normal` computes to a keyword rather than a length,
  * hence the fallback.
  */
+function lineStep(): number {
+  const doc = scroller?.querySelector<HTMLElement>(".gera-doc");
+  const step = doc ? parseFloat(getComputedStyle(doc).lineHeight) : NaN;
+  return Number.isFinite(step) && step > 0 ? step : 40;
+}
+
 function scrollViewByLine(dir: 1 | -1): void {
   if (!scroller) return;
-  const doc = scroller.querySelector<HTMLElement>(".gera-doc");
-  const step = doc ? parseFloat(getComputedStyle(doc).lineHeight) : NaN;
-  scroller.scrollTop += dir * (Number.isFinite(step) && step > 0 ? step : 40);
+  scroller.scrollTop += dir * lineStep();
+}
+
+/**
+ * Scroll the view by one screen. What `PageUp` / `PageDown` and `Mod+J` / `Mod+K` do.
+ *
+ * One line of the screen being left is kept, so the eye has something to land on
+ * instead of arriving in text with no connection to what came before.
+ *
+ * `PageUp` / `PageDown` are handled here for the same reason the arrow keys are: if the
+ * webview kept them, `Mod+J` would move by a different amount than the key it is meant
+ * to be a second spelling of.
+ */
+function scrollViewByPage(dir: 1 | -1): void {
+  if (!scroller) return;
+  const overlap = lineStep();
+  scroller.scrollTop += dir * Math.max(scroller.clientHeight - overlap, overlap);
 }
 
 /** The line visible at the top of the screen in edit mode (0-based, matching data-line on the view side). */
@@ -1220,6 +1240,11 @@ window.addEventListener("keydown", (e) => {
         e.preventDefault();
         return;
       }
+      if (e.key === "PageDown" || e.key === "PageUp") {
+        scrollViewByPage(e.key === "PageDown" ? 1 : -1);
+        e.preventDefault();
+        return;
+      }
     }
   }
 
@@ -1240,6 +1265,20 @@ window.addEventListener("keydown", (e) => {
   if (key === "o" && e.shiftKey) {
     e.preventDefault();
     run("見出しの一覧", toggleOutline);
+    return;
+  }
+
+  // Turn a page without leaving the middle of the keyboard (the owner's request,
+  // 2026-09-07). `Mod+J` / `Mod+K` are a second spelling of `PageDown` / `PageUp`, just
+  // as `j` / `k` are a second spelling of the arrow keys, so they go through the very
+  // same function — the mistake worth not repeating is letting two spellings of one
+  // operation move by different amounts.
+  //
+  // View mode only. The reason for it is reading, and in edit mode `PageUp` / `PageDown`
+  // belong to CodeMirror, where they carry the cursor and not just the view.
+  if ((key === "j" || key === "k") && !e.shiftKey && mode === "view") {
+    e.preventDefault();
+    scrollViewByPage(key === "j" ? 1 : -1);
     return;
   }
 
