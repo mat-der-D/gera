@@ -1425,7 +1425,7 @@ Claude Code 等が、gera で開いているファイルを書き換える場面
 
 **2026-09-07 に一つ決着した。**
 
-- **macOS でのユーザー CSS の置き場**——**実機検証では推定が当たっていた**（9-4）。`~/Library/Application Support/dev.smoothpudding.gera/user.css` に置いた `user.css` が反映されたという報告である。**`app_config_dir()` からの推定が、少なくとも macOS では当たったことになる。**同じ導き方をした Windows の `%APPDATA%\dev.smoothpudding.gera\user.css` の確からしさも上がるが、**Windows で確かめたことにはならない**（下の表に残す）。**確かめられたのはここまでである**——macOS で gera が起動して文書が読めることは前提として満たされたが、残りの macOS の項目（フォント、`.md` の関連付け、タイトルバー、`Cmd+,` 以外のキー）は**一つも潰れていない**
+- **macOS でのユーザー CSS の置き場**（9-4）——`~/Library/Application Support/dev.smoothpudding.gera/user.css` に置いた `user.css` が反映されたという報告である。**`app_config_dir()` からの推定が、少なくとも macOS では当たったことになる。**同じ導き方をした Windows の `%APPDATA%\dev.smoothpudding.gera\user.css` の確からしさも上がるが、**Windows で確かめたことにはならない**（下の表に残す）。**確かめられたのはここまでである**——macOS で gera が起動して文書が読めることは前提として満たされたが、残りの macOS の項目（フォント、`.md` の関連付け、タイトルバー、`Cmd+,` 以外のキー）は**一つも潰れていない**
 - **macOS で `Cmd+,` が OS に奪われないか**——**奪われなかった**（9-4）。同じ報告で、`Cmd+,` を押して `user.css` が読み直せている。**`Cmd+,` は macOS では「設定…」のショートカットなので、OS に取られる見込みが高いと見ていた。この見立ては外れた。****ただし `Cmd+,` の一つだけである**——`Cmd+R` / `Cmd+F` / `Cmd+Shift+O` / `Cmd +` `Cmd -` `Cmd 0` は、**奪われる相手が別なので、これで潰れたことにはならない**
 
 **残るもの**:
