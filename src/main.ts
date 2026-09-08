@@ -270,7 +270,7 @@ function refreshFileLabel(): void {
     fileLabelName.className = "gera-file-name";
     fileLabelTip = document.createElement("span");
     fileLabelTip.className = "gera-keys-tip";
-    fileLabelTip.textContent = "F1 キー一覧";
+    fileLabelTip.textContent = "F1 キー操作一覧";
     fileLabel.append(fileLabelName, fileLabelTip);
     document.body.append(fileLabel);
   }
@@ -293,9 +293,9 @@ function refreshFileLabel(): void {
  * Collapse the top-left hint only while the unobtrusive key list for an empty
  * document (`.gera-keys-hint`) is showing.
  *
- * Do not say the same thing twice. The list carries its own heading — 「キー一覧」
- * and 「F1 で開く・閉じる」 (`buildHead` in keys.ts) — so showing "F1 キー一覧"
- * directly above it conveys nothing more. It comes back once the list is gone.
+ * Do not say the same thing twice. That list carries an `F1` row of its own
+ * (`EMPTY_ROWS` in keys.ts), so showing "F1 キー操作一覧" directly above it conveys
+ * nothing more. It comes back once the list is gone.
  */
 function refreshTipVisibility(hintShown: boolean): void {
   if (!fileLabelTip) return;

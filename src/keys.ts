@@ -17,8 +17,9 @@
  * 1. The `F1` overlay (`open` / `close`) — appears only when called, dismissed with
  *    `Esc` or `F1`. Same manner as the outline list (outline.ts)
  * 2. The quiet list on an empty document (`showHint` / `hideHint`) — appears only at
- *    the moment when there is nothing to display. Typing anything dismisses it. With
- *    no state, nothing is added to the screen
+ *    the moment when there is nothing to display, and says only what can be done
+ *    there (`EMPTY_ROWS`). Typing anything dismisses it. With no state, nothing is
+ *    added to the screen
  * 3. The tip next to the file name (`.gera-keys-tip`; style.css and main.ts) —
  *    always present at the top left of the screen. Made permanent on 2026-09-04 at
  *    the owner's instruction (a decision that relaxes §9; the background is in
@@ -26,11 +27,19 @@
  *    showing it folds away, to avoid saying the same thing twice (main.ts)
  *
  * Why 2 is not a reuse of 1. The overlay layers over the text and demands to be
- * closed: you cannot type until it is gone. What a user can do with an empty
- * document is start writing, so a form that gets in the way of keystrokes points
- * away from the purpose. The content (`SECTIONS` below) is kept as one, and only the
- * presentation is kept as two — if the list's content were split across two places,
- * one of them would go stale.
+ * closed: you cannot type until it is gone. What a user can do with an empty document
+ * is start writing, so a form that gets in the way of keystrokes points away from the
+ * purpose.
+ *
+ * 1 and 2 also say different things. Until 2026-09-08 they shared one content
+ * (`SECTIONS`) and differed only in presentation, on the reasoning that a list split
+ * across two places would leave one of them stale. Held against the state 2 actually
+ * appears in, that turned out to be the wrong saving: nearly every row of `SECTIONS`
+ * acts on a document, and 2 is shown precisely when there is none. The owner's
+ * decision: 「目的が違って内容も違うので、別管理が良いと思います。」 So 2 has its own
+ * content now (`EMPTY_ROWS`, at the bottom of this file) — two rows, the way in and
+ * the way to everything else. Going stale is a real cost, and the guard against it is
+ * that `EMPTY_ROWS` names no operation that `SECTIONS` does not also carry.
  *
  * This module is dynamically imported from main.ts. The path of launching and just
  * reading — which is the ordinary way to use it (§1) — never loads it once. The CSS
@@ -293,7 +302,7 @@ function buildHead(): HTMLElement {
 
   const title = document.createElement("span");
   title.className = "gera-keys-title";
-  title.textContent = "キー一覧";
+  title.textContent = "キー操作一覧";
 
   const how = document.createElement("span");
   how.className = "gera-keys-how";
@@ -405,7 +414,35 @@ function onKey(e: KeyboardEvent): void {
 // ------------------------------------------- The list on an empty document
 
 /**
+ * What the quiet list on an empty document says. Kept apart from `SECTIONS` at the
+ * owner's decision (2026-09-08): "目的が違って内容も違うので、別管理が良い."
+ *
+ * The state it appears in is narrow. `text` is empty and the mode is edit, which in
+ * practice means gera was launched with no argument — the friend's first launch (§3).
+ * Almost nothing on `SECTIONS` can be done there: counted against the state, seventeen
+ * of its twenty rows act on a document that does not exist yet, and the three tracker
+ * rows are view-mode only while this state is edit mode. A first launch met by a
+ * screen of keys that do nothing is a bad first screen.
+ *
+ * So this list is not a shortened copy of `SECTIONS`. It answers the only question
+ * open at that moment — how do I get a document in, and where is everything else.
+ *
+ * `保存` is deliberately absent, though someone who starts typing here will want it:
+ * the list is gone by then. It disappears on the first keystroke, so it can only ever
+ * be read *before* anything is typed, and a key that is only useful afterwards cannot
+ * be read when it is needed. It is on the `F1` list.
+ */
+const EMPTY_ROWS: Row[] = [
+  { keys: [MOD, "O"], desc: "ファイルを開く" },
+  { keys: ["F1"], desc: "キー操作一覧" },
+];
+
+/**
  * Shows the quiet list on an empty document (form 2 at the head of this file).
+ *
+ * There is no heading here, unlike the overlay: with two rows there is nothing for a
+ * heading to gather, and `F1` is a row of its own — in this state it is a key you
+ * would actually press, not a note about how the thing you are reading was summoned.
  *
  * It must not get in the way of keystrokes. It is placed not in CodeMirror's content
  * but in the scrolling container (`scrollDOM`), positioned absolutely within it —
@@ -424,7 +461,10 @@ export function showHint(parent: HTMLElement): void {
   if (!hint) {
     hint = document.createElement("div");
     hint.className = "gera-keys-hint";
-    hint.append(buildHead(), buildList());
+    const list = document.createElement("div");
+    list.className = "gera-keys-list";
+    for (const row of EMPTY_ROWS) list.append(buildRow(row));
+    hint.append(list);
   }
   parent.append(hint);
 }

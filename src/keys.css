@@ -290,13 +290,15 @@
 
 /* One column here, whatever the overlay does. The width is the text column's, and two
    columns inside it would leave a key column of about 10rem with nothing to say in it
-   (the overlay gets the whole window and can afford two; keys.css above). */
+   (the overlay gets the whole window and can afford two; keys.css above). Since
+   2026-09-08 this form carries only two rows of its own (`EMPTY_ROWS` in keys.ts), so
+   there is nothing here to fragment either way. */
 .gera-keys-hint .gera-keys-list {
   columns: 1;
 }
 
-/* Shown fainter still than in the overlay. It lies on the paper about to be written
-   on, so it must not compete with the characters once writing starts. It is
+/* Shown fainter than in the overlay. It lies on the paper about to be written on, so
+   it must not compete with the characters once writing starts. It is
    something that disappears when you type, not something meant to be read.
 
    The caps lose their fill here for the same reason: on paper about to be written on, a
@@ -309,14 +311,4 @@
 .gera-keys-hint .gera-keys-cap {
   background: none;
   border-color: color-mix(in srgb, var(--rule) 70%, var(--bg));
-}
-.gera-keys-hint .gera-keys-group,
-.gera-keys-hint .gera-keys-sub {
-  color: color-mix(in srgb, var(--dim) 70%, var(--bg));
-}
-.gera-keys-hint .gera-keys-title {
-  color: var(--dim);
-}
-.gera-keys-hint .gera-keys-head {
-  border-bottom-color: color-mix(in srgb, var(--rule) 70%, var(--bg));
 }
