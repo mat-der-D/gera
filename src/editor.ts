@@ -19,7 +19,7 @@ import {
   rectangularSelection,
 } from "@codemirror/view";
 import type { DecorationSet, ViewUpdate } from "@codemirror/view";
-import { EditorState } from "@codemirror/state";
+import { EditorSelection, EditorState, Prec } from "@codemirror/state";
 import type { Extension, Range } from "@codemirror/state";
 import { markdown } from "@codemirror/lang-markdown";
 import { GFM } from "@lezer/markdown";
@@ -175,6 +175,74 @@ const theme = EditorView.theme({
   ".tok-url": { color: "var(--accent)", textDecoration: "underline" },
 });
 
+/**
+ * Turn a page in edit mode. `PageUp` / `PageDown`, and the second spellings
+ * `Mod+↑↓` / `Mod+J` `Mod+K` (§9-13).
+ *
+ * This is the same operation as `scrollViewByPage` in main.ts, and it has to move by
+ * the same amount: one screen minus one line, so the eye has a line to land on. Left to
+ * CodeMirror's `cursorPageUp` / `cursorPageDown`, edit mode moved by a whole screen with
+ * no overlap, and carried the cursor rather than the paper — so one key meant two
+ * different amounts depending on the mode. main.ts already refuses that for two
+ * spellings of one operation; the same refusal has to hold across the two modes.
+ *
+ * The cursor rides along, and the paper is scrolled by the distance the cursor actually
+ * travelled — not by the distance the keys asked for. The cursor lands on a line, so the
+ * two differ, and paying the difference out of the scroll walks the cursor up or down the
+ * window one press at a time (measured: 25.6px on a single `PageDown`). It is the defect
+ * §9-11 records for the tracker's band (125px over four presses), in the same shape.
+ *
+ * Scrolling without the cursor was the other option and is worse — the cursor is left
+ * behind, and the next keystroke yanks the paper back to it.
+ *
+ * Measured (980×760, a 673px scroller): `PageDown`, `PageUp`, `Mod+↑↓` and `Mod+J`/`K`
+ * all move 638px, one press down and one press back returns to the same line with the
+ * scroll where it started, and five presses walk the cursor 1.0px in the window. View
+ * mode moves 640px in the same window — the same rule, on a line 33.1px tall instead of
+ * 30.4px.
+ *
+ * At the end of the document the cursor stops, so the distance goes to zero and the paper
+ * stops with it.
+ */
+function pageBy(view: EditorView, dir: 1 | -1): boolean {
+  const line = view.defaultLineHeight;
+  // Counted in lines, not pixels. Asking `moveVertically` for a distance in pixels lands
+  // on whichever line covers that point, and it rounds differently going up than going
+  // down: measured, one `PageDown` moved 638px and the `PageUp` after it moved 612px, so
+  // a round trip did not come back to where it started. Moving a fixed number of lines
+  // cannot be asymmetric — the way back crosses the same lines.
+  //
+  // One line short of a screenful, so a line of the screen being left stays on screen for
+  // the eye to land on (the same rule as `scrollViewByPage` in main.ts).
+  const lines = Math.max(Math.floor(view.scrollDOM.clientHeight / line) - 1, 1);
+  const range = view.state.selection.main;
+  let moved = range;
+  for (let i = 0; i < lines; i++) moved = view.moveVertically(moved, dir === 1);
+  // Both positions are on screen — `moveVertically` had to lay the target out to find it
+  // — so this is measured before the scroll, while both are still rendered.
+  const from = view.coordsAtPos(range.head);
+  const to = view.coordsAtPos(moved.head);
+  view.dispatch({ selection: EditorSelection.create([moved]) });
+  view.scrollDOM.scrollTop += from && to ? to.top - from.top : dir * lines * line;
+  return true;
+}
+
+/**
+ * Placed above `defaultKeymap`, which binds `PageUp` / `PageDown` to the commands that
+ * move the cursor by a whole screen. `Prec.high` rather than mere ordering, so that this
+ * does not depend on where the extension happens to sit in the array.
+ */
+const pageKeys = Prec.high(
+  keymap.of([
+    { key: "PageDown", run: (v) => pageBy(v, 1) },
+    { key: "PageUp", run: (v) => pageBy(v, -1) },
+    { key: "Mod-ArrowDown", run: (v) => pageBy(v, 1) },
+    { key: "Mod-ArrowUp", run: (v) => pageBy(v, -1) },
+    { key: "Mod-j", run: (v) => pageBy(v, 1) },
+    { key: "Mod-k", run: (v) => pageBy(v, -1) },
+  ]),
+);
+
 export function createEditor(
   parent: HTMLElement,
   commands: Extension,
@@ -195,6 +263,7 @@ export function createEditor(
         decorations,
         theme,
         commands,
+        pageKeys,
         keymap.of([...defaultKeymap, ...historyKeymap]),
         EditorView.updateListener.of((u) => {
           if (u.docChanged) onChange(u.state.doc.toString());

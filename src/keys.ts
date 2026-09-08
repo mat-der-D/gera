@@ -65,10 +65,17 @@ interface Group {
  * not fit on one line is left out (save conflicts and the handling of unsaved work
  * are announced by the banner at the moment they happen; main.ts).
  *
- * The spellings are copied straight from the handler in main.ts. After the main
- * list, the ones inside the tools and the ones in edit mode are split off — those
- * are the kind you do not suffer for not knowing but are faster for knowing, so
- * mixing them in would make the main list harder to read.
+ * The spellings are copied straight from the handler in main.ts. The main list holds
+ * what works in both modes, including moving through the document (§9-13: turning a
+ * page moves by the same amount in either mode). Below it come the ones that only exist
+ * somewhere — inside a tool, in view mode, in edit mode. Those are the kind you do not
+ * suffer for not knowing but are faster for knowing, so mixing them in would make the
+ * main list harder to read.
+ *
+ * `J` / `K` are the one exception inside the main list: they are aliases of the arrow
+ * keys (§9-11), and in edit mode an unmodified letter is text. The row says so rather
+ * than being split off, because splitting the aliases from the keys they are aliases of
+ * is what makes a list hard to read.
  */
 const GROUPS: Group[] = [
   {
@@ -81,7 +88,8 @@ const GROUPS: Group[] = [
       { key: `${MOD}+E`, desc: "閲覧 ⇄ 編集の切り替え" },
       { key: `${MOD}+Shift+O`, desc: "見出しへ飛ぶ" },
       { key: `${MOD}+F`, desc: "文書内を探す" },
-      { key: `${MOD}+L`, desc: "トラッカー（読んでいる行に帯）" },
+      { key: "↑ ↓ / J K", desc: "一行進む（J K は閲覧モードのみ）" },
+      { key: "PageUp / PageDown", desc: `一画面進む（${MOD}+↑ ↓ / ${MOD}+J K も同じ）` },
       { key: `${MOD}+ + / − / 0`, desc: "字の大きさ" },
       { key: `${MOD}+,`, desc: "ユーザー CSS を読み直す" },
       { key: `${MOD}+Shift+C`, desc: "本文全体をクリップボードへ" },
@@ -100,10 +108,8 @@ const GROUPS: Group[] = [
   {
     title: "閲覧モードで",
     rows: [
-      { key: "↑ ↓ / j k", desc: "一行進む。紙面のほうが動く" },
-      { key: "PageUp / PageDown", desc: "紙面を一画面送る" },
-      { key: `${MOD}+↑ ↓ / ${MOD}+K J`, desc: "同上。手を中央に置いたまま" },
-      { key: "Shift+↑ ↓ / Shift+K J", desc: "一行進む。トラッカーの帯のほうが動く（出ていなければ紙面）" },
+      { key: `${MOD}+L`, desc: "トラッカー（読んでいる行に帯）" },
+      { key: "Shift+↑ ↓ / Shift+K J", desc: "帯のほうを一行動かす（出ていなければ紙面）" },
     ],
   },
   {

@@ -516,6 +516,10 @@ function scrollViewByLine(dir: 1 | -1): void {
  * `PageUp` / `PageDown` are handled here for the same reason the arrow keys are: if the
  * webview kept them, `Mod+J` would move by a different amount than the key it is meant
  * to be a second spelling of.
+ *
+ * Edit mode turns a page by the same rule, through `pageBy` in editor.ts (§9-13). The
+ * amount has to agree there too: one key that moves by two different amounts depending
+ * on the mode is the same defect as two spellings that disagree.
  */
 function scrollViewByPage(dir: 1 | -1): void {
   if (!scroller) return;
@@ -1281,8 +1285,10 @@ window.addEventListener("keydown", (e) => {
   // through the very same function — the mistake worth not repeating is letting two
   // spellings of one operation move by different amounts.
   //
-  // View mode only. The reason for it is reading, and in edit mode `PageUp` / `PageDown`
-  // belong to CodeMirror, where they carry the cursor and not just the view.
+  // Taken here for view mode only — not because edit mode does something else, but
+  // because there it is CodeMirror that receives the key. Edit mode binds the same four
+  // spellings to `pageBy` (editor.ts), which moves by the same one screen minus one line
+  // (§9-13).
   if (mode === "view" && !e.shiftKey) {
     const page = key === "j" || key === "arrowdown" ? 1 : key === "k" || key === "arrowup" ? -1 : 0;
     if (page !== 0) {
