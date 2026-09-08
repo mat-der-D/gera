@@ -8,11 +8,12 @@
  *
  * View mode only. Unmodified keys belong to the text in edit mode.
  *
- * The rule the whole module follows is one sentence: **while the tracker is on
- * screen it keeps its height in the window and the lines move under it; while it is
- * off screen the view moves alone and the tracker stays where it was.** Drift is
- * therefore only ever created by a jump (`Mod+Shift+O`, `Mod+F`, a link), which is
- * axis 3 = 1 in §9-9 — the reversible side.
+ * The rule the whole module follows is one sentence: **the band keeps its height in
+ * the window and the lines move under it.** Whatever moves the view — the wheel,
+ * `PageUp` / `PageDown`, the scrollbar, a jump from the heading list, find or a link —
+ * the band stays where it is and takes the line that arrives there (§9-16). A scroll
+ * gera performs to carry the band itself is the one exception, and `holdUntil` below is
+ * how it is told apart.
  *
  * Two facts about the document shape drive the implementation (§9-9).
  *
@@ -29,12 +30,6 @@
  */
 import "./tracker.css";
 
-export interface TrackerOptions {
-  /** The banner (main.ts). Used once, when a jump leaves the tracker off screen. */
-  notify: (message: string) => void;
-}
-
-let opts: TrackerOptions | null = null;
 let host: HTMLElement | null = null;
 let band: HTMLElement | null = null;
 let on = false;
@@ -47,36 +42,25 @@ let lineHeight = 0;
 /**
  * Until when scrolls keep the tracker on its line instead of moving it.
  *
- * During a scroll gera itself started the tracker keeps its line and travels with the
- * text; during a scroll the user asked for (wheel, `PageUp` / `PageDown`, the
- * scrollbar) it keeps its height in the window instead and takes the line that arrives
- * there. A scroll event cannot tell the two apart, so this says which.
+ * During a scroll gera itself started to carry the band (`↑↓`, `Shift+↑↓` at the edge
+ * of the window) the tracker keeps its line and travels with the text; during every
+ * other scroll — the wheel, `PageUp` / `PageDown`, the scrollbar, a jump — it keeps its
+ * height in the window instead and takes the line that arrives there. A scroll event
+ * cannot tell the two apart, so this says which.
  *
- * It is a deadline rather than a flag because a jump does not finish in one scroll:
- * `settle` in viewer.ts re-scrolls two frames later, once the deferred equations have
- * been typeset (§5-4). A flag cleared on the next line would be gone by then.
+ * It is a deadline rather than a flag because one movement is not one scroll: `settle`
+ * in viewer.ts re-scrolls two frames later, once the deferred equations have been
+ * typeset (§5-4). A flag cleared on the next line would be gone by then.
  */
 let holdUntil = 0;
 let settleTimer = 0;
 
 /**
- * Whether the tracker is coupled to the window — that is, whether it was on screen the
- * last time it settled.
- *
- * It cannot be worked out at the moment a scroll is reported. Scroll events are
- * delivered after the fact, so by then a tracker that was on screen has already been
- * carried off it, and asking "is it visible?" there answers for the state after the
- * scroll rather than the state that decides what the scroll means. Measured: PageDown
- * made the band disappear instead of taking the line that arrived at its height.
- */
-let attached = false;
-
-/**
  * The height in the window the band is holding.
  *
- * It has to be remembered rather than recomputed, for the same reason `attached` does:
- * by the time a scroll is reported the band has already been carried away from the
- * height it was holding, so asking where it is answers with where the scroll put it.
+ * It has to be remembered rather than recomputed: by the time a scroll is reported the
+ * band has already been carried away from the height it was holding, so asking where it
+ * is answers with where the scroll put it.
  * Measured: after a PageDown the held height came out as -413px — off the top of the
  * window — and nothing could be found there to land on.
  */
@@ -177,10 +161,15 @@ function record(top: number, height: number): void {
   const rect = host?.getBoundingClientRect();
   docTop = top - (rect ? rect.top : 0) + (host?.scrollTop ?? 0);
   lineHeight = height;
-  attached = true;
 }
 
-/** Whether the tracked line is inside the window. Drift means this is false. */
+/**
+ * Whether the tracked line is inside the window.
+ *
+ * Since §9-16 every scroll takes the band with it, so this is false only in the moments
+ * between a scroll and the measurement that follows it, or where `sync` could find no
+ * line to land on at all.
+ */
 function visible(): boolean {
   const rect = host?.getBoundingClientRect();
   if (!rect) return false;
@@ -326,7 +315,13 @@ function pickUp(): void {
   anchor();
 }
 
-/** Bring the window back to the tracker, without moving the tracker (§9-9). */
+/**
+ * Bring the window back to the tracker, without moving the tracker (§9-9).
+ *
+ * Since §9-16 the band travels with every scroll, so it is off screen only where a
+ * measurement has not landed yet or found no line at all. This is the way back from
+ * that: rare now, and still the only one.
+ */
 function pullBack(): void {
   const rect = host?.getBoundingClientRect();
   if (!rect || !host) return;
@@ -354,11 +349,9 @@ function sync(): void {
 
 function onScroll(): void {
   if (!on) return;
-  // Either gera scrolled, or the tracker is off screen and stays where it is. Both keep
-  // the line; only the band's place in the window changes.
-  if (performance.now() < holdUntil || !attached) {
-    // gera scrolled, so the band travelled with the text and its new height is the one
-    // to hold. Off screen it holds nothing; `anchor` leaves the old value alone.
+  if (performance.now() < holdUntil) {
+    // gera scrolled to carry the band, so it travelled with the text and kept its line;
+    // the height it arrived at is the one to hold from now on.
     anchor();
     return;
   }
@@ -373,8 +366,7 @@ function onResize(): void {
 // --------------------------------------------------------------------- entry points
 
 /** `Mod+L`. Returns the state it moved to, for the banner. */
-export function toggle(scroller: HTMLElement, options: TrackerOptions): boolean {
-  opts = options;
+export function toggle(scroller: HTMLElement): boolean {
   if (on) {
     off();
     return false;
@@ -398,7 +390,6 @@ export function toggle(scroller: HTMLElement, options: TrackerOptions): boolean 
 export function off(): void {
   if (!on) return;
   on = false;
-  attached = false;
   carry = 0;
   clearTimeout(settleTimer);
   host?.removeEventListener("scroll", onScroll);
@@ -409,25 +400,26 @@ export function off(): void {
 }
 
 /**
- * A jump moved the window on its own (`Mod+Shift+O`, `Mod+F`, a link). The tracker does
- * not follow — that is axis 3 = 1, the side that can be undone (§9-9).
+ * A jump moved the window on its own (`Mod+Shift+O`, `Mod+F`, a link).
  *
- * Say so once, because the cost of two positions is that one of them is off screen and
- * invisible. The message names both ways back, so neither has to be memorised. It does
- * not carry the distance in lines: counting lines across blocks that are not laid out
- * would mean laying out the whole document, which is the cost content-visibility exists
- * to avoid (§5-4). This is narrower than the mock, which showed "12 lines above".
+ * The tracker goes along, under exactly the rule `PageUp` / `PageDown` follows: the
+ * band keeps its height in the window and takes the line that arrives there (the
+ * owner's call, 2026-09-09 — §9-16). It used to stay behind instead, keeping the place
+ * being read while the view went elsewhere; that is the position §9-11 argued for, and
+ * what it bought — jumping to look something up and coming back with `Shift+↑↓` — is
+ * what this gives up.
+ *
+ * All that is needed is to get out of the way. The scroll the jump just performed is
+ * reported asynchronously, so clearing the hold here is enough for it to be read as a
+ * scroll the reader asked for; `settle`'s second pass two frames later (§5-4) arrives
+ * as another scroll and simply re-runs the measurement.
  */
 export function afterJump(): void {
   if (!on) return;
-  // Scroll events are delivered asynchronously, so this lands before the scroll the
-  // jump just performed is reported. 500 ms covers `settle`'s second pass as well.
-  hold(500);
+  holdUntil = 0;
+  // The band would otherwise sit on the old pixel until `sync` runs, which reads as it
+  // having stayed behind.
   paint();
-  // Off screen, the tracker stops following the window: paging around at the
-  // destination must not throw away the position being kept (§9-11).
-  attached = visible();
-  if (!attached) opts?.notify("トラッカーは画面の外にあります（Shift+↑↓ で戻る）");
 }
 
 /**
@@ -456,11 +448,11 @@ export function handleKey(e: KeyboardEvent): boolean {
   const up = key === "arrowup" || key === "k";
   if (down || up) {
     if (e.shiftKey) {
-      // Move the band and leave the paper alone. Off screen, the first press only
-      // brings the window back — it does not move the tracker. gera already asks for a
-      // second press once, when `Mod+R` would throw away unsaved work (§9-6 (d)), so
-      // this manner has been learned already, and the reversible side is the default
-      // (§11).
+      // Move the band and leave the paper alone. Off screen — which since §9-16 means
+      // a measurement did not land — the first press only brings the window back and
+      // does not move the tracker. gera already asks for a second press once, when
+      // `Mod+R` would throw away unsaved work (§9-6 (d)), so this manner has been
+      // learned already, and the reversible side is the default (§11).
       if (!visible()) pullBack();
       else {
         step(down ? 1 : -1);

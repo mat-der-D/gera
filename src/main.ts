@@ -667,7 +667,7 @@ function restoreLine(line: number): void {
  */
 function jumpToLine(line: number): void {
   restoreLine(line);
-  // A jump moves the view only; the tracker keeps the place being read (§9-9 axis 3).
+  // The tracker goes with the view, on the same rule as `PageUp` / `PageDown` (§9-16).
   tracker?.afterJump();
   focusCurrent();
 }
@@ -798,7 +798,7 @@ async function toggleTracker(): Promise<void> {
   const ui = (tracker ??= await import("./tracker"));
   // tracker.css arrives late via the dynamic import (same reason as toggleOutline).
   raiseUserCss();
-  notify(ui.toggle(el, { notify }) ? "トラッカー: ON（Shift+↑↓ で移動）" : "トラッカー: OFF");
+  notify(ui.toggle(el) ? "トラッカー: ON（Shift+↑↓ で移動）" : "トラッカー: OFF");
 }
 
 // ------------------------------------------------------- the key list (F1)
