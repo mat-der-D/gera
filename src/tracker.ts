@@ -308,7 +308,14 @@ function stepWithPaper(dir: 1 | -1): void {
   anchor();
 }
 
-/** Put the tracker on the first line of the window — the line about to be read (§9-9). */
+/**
+ * Put the tracker on the first line of the window — the line about to be read (§9-9).
+ *
+ * Only `toggle` calls this now. It used to have a key of its own (`Enter`, for taking a
+ * band left off screen by a jump), which was removed on 2026-09-08: pressing `Mod+L`
+ * twice goes off and on again, and turning on runs exactly this, so the two ended at
+ * the same state (§9-12).
+ */
 function pickUp(): void {
   const rect = host?.getBoundingClientRect();
   if (!rect) return;
@@ -420,16 +427,21 @@ export function afterJump(): void {
   // Off screen, the tracker stops following the window: paging around at the
   // destination must not throw away the position being kept (§9-11).
   attached = visible();
-  if (!attached) opts?.notify("トラッカーは画面の外にあります（Shift+↑↓ で戻る、Enter でここから読む）");
+  if (!attached) opts?.notify("トラッカーは画面の外にあります（Shift+↑↓ で戻る）");
 }
 
 /**
  * Keys that belong to the tracker while it is on. Returns whether the key was taken.
  *
- * Only `Shift+↑↓` (and `Shift+J` / `Shift+K`) move the band, plus `Enter` to pick it up
- * again. Scrolling — a line, a page, the wheel, the scrollbar — is not taken here at
- * all: the scroll handler above keeps the band at its height in the window, which is
- * how the line it points at advances as the paper moves.
+ * Only `Shift+↑↓` (and `Shift+J` / `Shift+K`) move the band. Scrolling — a line, a page,
+ * the wheel, the scrollbar — is not taken here at all: the scroll handler above keeps
+ * the band at its height in the window, which is how the line it points at advances as
+ * the paper moves.
+ *
+ * `Enter` used to be taken here as well, to bring a band left off screen by a jump back
+ * to the line being read. It was removed on 2026-09-08 (§9-12): `Mod+L` twice reaches
+ * the identical state, so the binding bought nothing and held an unmodified key in view
+ * mode for a case that only arises after a jump.
  *
  * That split is the owner's reading of it (2026-09-07): moving to the next line is one
  * act with two ways to perform it — move the eye, or move the paper. The tracker's
@@ -463,14 +475,6 @@ export function handleKey(e: KeyboardEvent): boolean {
     // scroll in main.ts — the paper moves and the tracker keeps the line it is on.
     if (!visible()) return false;
     stepWithPaper(down ? 1 : -1);
-    e.preventDefault();
-    return true;
-  }
-
-  // `Enter` means "settle on this" inside the tools already (keys.ts), so reading it as
-  // "start reading from here" adds no new idea.
-  if (key === "enter" && !e.shiftKey && !visible()) {
-    pickUp();
     e.preventDefault();
     return true;
   }

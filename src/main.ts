@@ -1213,9 +1213,8 @@ window.addEventListener("keydown", (e) => {
     return;
   }
 
-  // The tracker owns the unmodified arrow keys, `j` / `k` and `Enter` while it is on
-  // (§9-11). It is asked before the gate below, since none of its keys carry a
-  // modifier. While a tool is open those keys belong to the tool, not to the text
+  // The tracker owns `Shift` + the arrow keys / `j` / `k` while it is on (§9-11). It is
+  // asked before the gate below, since none of its keys carry a modifier. While a tool is open those keys belong to the tool, not to the text
   // behind it.
   if (mode === "view" && !outline?.isOpen() && !find?.isOpen() && !keys?.isOpen()) {
     if (tracker?.handleKey(e)) return;
