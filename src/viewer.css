@@ -157,8 +157,6 @@
 
 /* --------------------------------------------------------------- Code */
 
-/* No syntax highlighting (startup speed is the first priority, §3).
-   A monospace face and a background alone distinguish it from the body text well enough. */
 .gera-doc code, .gera-doc pre { font-family: var(--font-mono); }
 
 .gera-doc :not(pre) > code {
@@ -181,6 +179,62 @@
   overflow-x: auto;
 }
 .gera-doc pre > code { white-space: pre; background: none; padding: 0; }
+
+/* --------------------------------------------- Syntax highlighting (§9-15) */
+
+/* The class names are highlight.js's own (src/highlight.ts). The colours are here
+   because "all the colours in CSS" (the owner, 2026-09-05, §9-10) — nothing below is
+   decided on the JS side.
+
+   Six names carry the whole palette. There are about thirty class names in highlight.js
+   and mapping them one to one would mean thirty things to learn (the third priority,
+   §4). What the reader actually needs to tell apart while reading is fewer: what is a
+   comment, what is text, what is a name, what is a fixed word, what is a number, and
+   what is machinery around the code.
+
+   The colours are measured against the block background (`--code-bg`), not chosen by
+   eye: every one of them clears 4.5:1 in both schemes. Comments were the reason to
+   measure — in these documents they are written in Japanese and carry as much meaning as
+   the code (the first screenshot of this feature had them at 3.0:1, which read as
+   greyed-out rather than as text).
+
+   These selectors are deliberately unscoped — `.hljs-string`, not `.gera-doc
+   .hljs-string`. Any of the highlight.js themes that already exist on the web can be
+   pasted into `user.css` as it is: the specificity matches, and the user CSS is injected
+   at the end of <head> (main.ts), so it wins by coming later. The one thing such a theme
+   will not move is the background of the block, which stays `--code-bg` along with
+   tables and inline code. */
+:root {
+  --code-comment: #6f6858;
+  --code-string:  #4a7233;
+  --code-keyword: #9a3b6c;
+  --code-number:  #a3562a;
+  --code-name:    #2f6b8f;
+  --code-meta:    #6b5aa0;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --code-comment: #948d80;
+    --code-string:  #a8c98a;
+    --code-keyword: #e08bb4;
+    --code-number:  #e0a86a;
+    --code-name:    #86bcdc;
+    --code-meta:    #b6a6e8;
+  }
+}
+
+.hljs-comment, .hljs-quote { color: var(--code-comment); font-style: italic; }
+.hljs-string, .hljs-regexp, .hljs-addition, .hljs-char { color: var(--code-string); }
+.hljs-keyword, .hljs-literal, .hljs-selector-tag, .hljs-deletion { color: var(--code-keyword); }
+.hljs-number, .hljs-symbol, .hljs-bullet { color: var(--code-number); }
+/* `attr` is what carries the keys of JSON and YAML, and those are the two most common
+   languages in the owner's documents (§9-15). It belongs with names, not with markup. */
+.hljs-attr, .hljs-attribute, .hljs-property, .hljs-variable, .hljs-template-variable,
+.hljs-name, .hljs-tag, .hljs-title, .hljs-section, .hljs-link,
+.hljs-selector-class, .hljs-selector-id { color: var(--code-name); }
+.hljs-meta, .hljs-built_in, .hljs-type, .hljs-doctag, .hljs-params { color: var(--code-meta); }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: 600; }
 
 /* ----------------------------------------------------------------- Tables */
 

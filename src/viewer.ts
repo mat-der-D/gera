@@ -215,7 +215,7 @@ interface MathEnv extends Env {
  * Leave only a placeholder and defer the call into KaTeX.
  *
  * The whole call is wrapped in a closure and stored. The point is not to typeset
- * off-screen math on the first pass; the cost breakdown is written at `fillMath` below.
+ * off-screen math on the first pass; the cost breakdown is written at `fillBlocks` below.
  * The closure only captures markdown-it's token array and options, and those are not
  * rewritten after conversion is done.
  */
@@ -460,11 +460,11 @@ export function renderInto(scroller: HTMLElement, text: string): void {
     // swapping a single block with replaceWith does not break anything (for local
     // editing).
     body.innerHTML = html;
-    fillMath(scroller, body, math);
+    fillBlocks(scroller, body, math);
   }
 }
 
-// ------------------------------------------------------------ Deferring math
+// ------------------------------------------------- Deferring work per block
 
 /**
  * Typeset off-screen math only once it comes close.
@@ -530,50 +530,147 @@ const EAGER = 8;
 /** The distance at which something counts as close. Typesetting starts two screens ahead. */
 const AHEAD = "200% 0px";
 
-/** Math not yet typeset. Grouped per block (rebuilt every time the body is re-rendered). */
-let pending = new Map<HTMLElement, HTMLElement[]>();
-let pendingMath: (() => string)[] = [];
+/**
+ * Work waiting for its block to come near. Rebuilt on every re-render.
+ *
+ * This started out holding only math. Syntax highlighting (§9-15) wants exactly the same
+ * thing — "do this once the block is nearly on screen" — so what is held is a closure
+ * rather than a placeholder element, and both go into the one queue. Two queues would
+ * mean two observers watching the same blocks.
+ */
+let pending = new Map<HTMLElement, (() => void)[]>();
+/**
+ * Blocks whose deferred work has already run.
+ *
+ * Needed because highlighting is scheduled late: the module it needs arrives after the
+ * first blocks have been settled. Without this record, a block that is already on screen
+ * would sit and wait for an approach that has already happened, and its code would never
+ * get coloured.
+ */
+let settled = new WeakSet<HTMLElement>();
 let watching: IntersectionObserver | null = null;
 
-/** Typeset one block's worth of math right now. Do nothing if we do not hold any. */
-function fillBlock(top: HTMLElement): void {
-  const slots = pending.get(top);
-  if (!slots) return;
-  pending.delete(top);
-  watching?.unobserve(top);
-  for (const el of slots) fill(el, pendingMath);
+/**
+ * The block directly under `.gera-doc` that contains this element.
+ *
+ * The block is the unit of deferral because it is the unit `content-visibility` works on
+ * (viewer.css).
+ */
+function blockOf(body: HTMLElement, el: HTMLElement): HTMLElement {
+  let top: HTMLElement = el;
+  while (top.parentElement && top.parentElement !== body) top = top.parentElement;
+  return top;
 }
 
-function fillMath(scroller: HTMLElement, body: HTMLElement, math: (() => string)[]): void {
-  watching?.disconnect();
-  watching = null;
-  pending = new Map();
-  pendingMath = math;
-  if (!math.length) return;
+/** Run everything held for one block right now. */
+function runBlock(top: HTMLElement): void {
+  settled.add(top);
+  const jobs = pending.get(top);
+  if (!jobs) return;
+  pending.delete(top);
+  watching?.unobserve(top);
+  for (const job of jobs) job();
+}
 
-  // Group the placeholders by the "block directly under .gera-doc" they belong to.
-  // The unit of deferral is the block because that is the unit content-visibility works
-  // on (viewer.css).
-  for (const el of body.querySelectorAll<HTMLElement>("[data-math]")) {
-    let top: HTMLElement = el;
-    while (top.parentElement && top.parentElement !== body) top = top.parentElement;
-    const found = pending.get(top);
-    if (found) found.push(el);
-    else pending.set(top, [el]);
+/** Hold work until the block comes near — or do it on the spot if that block is done. */
+function defer(top: HTMLElement, job: () => void): void {
+  if (settled.has(top)) {
+    job();
+    return;
   }
-  if (!pending.size) return;
+  const jobs = pending.get(top);
+  if (jobs) {
+    jobs.push(job);
+    return;
+  }
+  pending.set(top, [job]);
+  watching?.observe(top);
+}
 
-  // The leading portion is typeset on the spot so it makes the initial render.
-  for (const top of Array.from(body.children).slice(0, EAGER)) fillBlock(top as HTMLElement);
-  if (!pending.size) return;
-
+/** Start over. Called once per render, before anything is scheduled. */
+function watchBlocks(scroller: HTMLElement): void {
+  watching?.disconnect();
+  pending = new Map();
+  settled = new WeakSet();
   watching = new IntersectionObserver(
     (entries) => {
-      for (const entry of entries) if (entry.isIntersecting) fillBlock(entry.target as HTMLElement);
+      for (const entry of entries) if (entry.isIntersecting) runBlock(entry.target as HTMLElement);
     },
     { root: scroller, rootMargin: AHEAD },
   );
-  for (const top of pending.keys()) watching.observe(top);
+}
+
+/** Put every equation into the queue. Nothing is typeset here. */
+function deferMath(body: HTMLElement, math: (() => string)[]): void {
+  if (!math.length) return;
+  for (const el of body.querySelectorAll<HTMLElement>("[data-math]")) {
+    defer(blockOf(body, el), () => fill(el, math));
+  }
+}
+
+// ------------------------------------------------------- Syntax highlighting
+
+/**
+ * Info strings that mean "do not colour this".
+ *
+ * `text` is the second most common of all the info strings in the owner's documents
+ * (3,625 files, §9-15), so this is not an edge case but a well-travelled path. Naming
+ * them here rather than asking highlight.js is what lets a plain-text document avoid
+ * loading the module at all.
+ */
+const PLAIN = new Set(["text", "txt", "plain", "plaintext", "none", "output", "log"]);
+
+/**
+ * Colour the fenced code blocks (§9-15, implementation order 10 of §14).
+ *
+ * The module is imported only if the document holds a block worth colouring. Viewer mode
+ * is the startup path, so importing highlight.js from the top of this file would put 89
+ * kB in front of every document, including the ones with no code in them (the first
+ * priority, §4).
+ *
+ * Nothing waits for that import. Code shows up black and gains its colours a frame or
+ * two later. The alternative — holding the first paint until the module lands — trades a
+ * change of colour for a longer wait, and the colour change moves nothing on the page:
+ * the text is monospaced and the spans carry no metrics of their own, so no line shifts.
+ *
+ * Highlighting goes through the same queue as math rather than running over the whole
+ * document at once. A document of a few hundred code blocks would otherwise pay for all
+ * of them before the first screen settles.
+ */
+function deferCode(body: HTMLElement): void {
+  const found: { el: HTMLElement; language: string }[] = [];
+  for (const el of body.querySelectorAll<HTMLElement>("pre > code[class*=language-]")) {
+    const language = /(?:^|\s)language-(\S+)/.exec(el.className)?.[1]?.toLowerCase();
+    if (!language || PLAIN.has(language)) continue;
+    found.push({ el, language });
+  }
+  if (!found.length) return;
+  void import("./highlight").then(({ highlight }) => {
+    for (const { el, language } of found) {
+      // The document may have been re-rendered while the module was in flight, in which
+      // case these elements are no longer in the tree and the blocks they belonged to
+      // are gone. Colouring them would be work thrown away, and `blockOf` would walk up
+      // into a detached subtree.
+      if (!el.isConnected) continue;
+      defer(blockOf(body, el), () => {
+        const html = highlight(el.textContent ?? "", language);
+        if (html !== null) el.innerHTML = html;
+      });
+    }
+  });
+}
+
+/** Set the queue up, fill it, and settle the leading blocks. */
+function fillBlocks(
+  scroller: HTMLElement,
+  body: HTMLElement,
+  math: (() => string)[],
+): void {
+  watchBlocks(scroller);
+  deferMath(body, math);
+  deferCode(body);
+  // The leading portion is done on the spot so that it makes the initial render.
+  for (const top of Array.from(body.children).slice(0, EAGER)) runBlock(top as HTMLElement);
 }
 
 // ------------------------------------------------------------ Alignment
@@ -607,7 +704,7 @@ function settle(scroller: HTMLElement, target: HTMLElement): void {
   nudge(scroller, target);
   // At the destination, the math that was deferred gets typeset. What notices the
   // approach is IntersectionObserver, and that runs just before the next frame's paint
-  // (fillMath). If math goes into blocks above the destination, the target element is
+  // (fillBlocks). If math goes into blocks above the destination, the target element is
   // pushed down by that much. So scroll once more, after the typesetting finishes.
   // rAF is nested two deep because the observer's notification arrives after rAF.
   requestAnimationFrame(() => {
