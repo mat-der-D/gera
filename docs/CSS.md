@@ -189,13 +189,22 @@ gera の閲覧モードは、**素の HTML と、数えるほどのクラス名*
 | `.gera-dirty` | **未保存を示す、ウィンドウの上端の線**（既定は 6px） | 太さ（`height`）、色 |
 | `.gera-keys` | `F1` のキー一覧が出るときに画面全体を覆うオーバーレイの器 | オーバーレイの濃さ、出す位置（`padding`） |
 | `.gera-keys-box` | 一覧の箱 | 幅（`max-width`）、枠、影、角の丸み |
-| `.gera-keys-list` | キーと意味を並べた格子 | 列の間隔、行の間隔 |
-| `.gera-keys-key` | キーの表記（`Ctrl+O` など） | 書体、色 |
+| `.gera-keys-list` | 一覧の全体。**二段組み**にしてある | 段数（`columns`）、段の間隔 |
+| `.gera-keys-section` | 一つの節（「読み進める」など）。見出しと行がここに入る | 節の間の余白 |
+| `.gera-keys-group` | 節の見出し（「ファイルを出し入れする」など） | 書体、文字色、余白 |
+| `.gera-keys-row` | 一行。左がキー、右が意味 | キーの列の幅、行の間隔 |
+| `.gera-keys-key` | その行のキーを入れる箱 | 並びの間隔 |
+| `.gera-keys-cap` | **キー一つ**（`Ctrl` や `S`）。キートップの形に描いてある | 色、地色、枠、角の丸み |
+| `.gera-keys-mod` | 修飾キーの `.gera-keys-cap`（`Ctrl` `Shift`）。薄く出してある | 文字色 |
+| `.gera-keys-sep` | キーの間の `+` と `/` | 文字色、大きさ |
 | `.gera-keys-desc` | その意味 | 書体、色 |
-| `.gera-keys-group` | 群の見出し（「編集モードで」など） | 文字色、上の余白 |
+| `.gera-keys-note` | 意味の後半（「紙面は動かない」など）。薄く、行を分けて出る | 文字色、大きさ |
+| `.gera-keys-only` | 「閲覧モード」「編集モード」の小さな印 | 枠、文字色 |
+| `.gera-keys-inner` | **道具を開いている間だけのキー**を、その道具の下に入れ子にした箱 | 左の罫、字下げ |
+| `.gera-keys-sub` | その入れ子の見出し（「検索を開いている間」） | 文字色、大きさ |
 | `.gera-keys-hint` | **空の文書のときに出る控えめな一覧**（オーバーレイではない） | 位置、文字色 |
 
-**後半の 11 個**（`.gera-file` から `.gera-keys-hint` まで）**は閲覧モードだけのものではない。**ラベル（`.gera-file`）・未保存の線（`.gera-dirty`）・`F1` のオーバーレイ（`.gera-keys`）は**ウィンドウに固定してあるので、閲覧・編集の両モードで同じ位置・同じ見た目になる**（`.gera-keys-hint` だけは、空の文書＝編集モードのときにしか出ない）。詳しくは下の二節に書いた。
+**後半の 19 個**（`.gera-file` から `.gera-keys-hint` まで）**は閲覧モードだけのものではない。**ラベル（`.gera-file`）・未保存の線（`.gera-dirty`）・`F1` のオーバーレイ（`.gera-keys`）は**ウィンドウに固定してあるので、閲覧・編集の両モードで同じ位置・同じ見た目になる**（`.gera-keys-hint` だけは、空の文書＝編集モードのときにしか出ない）。詳しくは下の二節に書いた。
 
 **`data-depth` は絶対の見出し番号ではない。**その文書の中で**最も浅い見出しからの差**である（`##` から始まる文書が普通にあるので、絶対の番号で字下げすると全部が一段下がって字下げの意味が消える）。6 段で頭打ちにしてある。字下げを変えるならこう書く。
 
@@ -289,20 +298,37 @@ gera の閲覧モードは、**素の HTML と、数えるほどのクラス名*
 
 | 見せ方 | クラス名 |
 |---|---|
-| **`F1` のオーバーレイ** | `.gera-keys`（器）→ `.gera-keys-box`（箱）→ `.gera-keys-list`（格子） |
-| **空の文書のときの控えめな一覧** | `.gera-keys-hint`（中身は同じ `.gera-keys-list`） |
+| **`F1` のオーバーレイ** | `.gera-keys`（器）→ `.gera-keys-box`（箱）→ `.gera-keys-list`（一覧） |
+| **空の文書のときの控えめな一覧** | `.gera-keys-hint`（中身は同じ `.gera-keys-list`。**ここでは一段になる**） |
 | **ラベルの中の案内** | `.gera-keys-tip`（上の節） |
 
-**格子の中身は二列である。**左が `.gera-keys-key`（キーの表記。等幅・`var(--accent)`）、右が `.gera-keys-desc`（意味。`var(--font-sans)`）で、群の見出し（`.gera-keys-group`）が二列ぶんを跨ぐ。
+**中身は「やること」で分けた節が二段に流れる形である**（設計文書 第9-14節）。
 
-```css
-.gera-keys-box { max-width: 36rem; }              /* 箱を広くする */
-.gera-keys-key { color: var(--fg); }              /* キーの色を本文と同じに */
-.gera-keys-list { column-gap: 2rem; }             /* 二列の間を空ける */
+```
+.gera-keys-list                     ← 二段組み（columns: 2）
+  └ .gera-keys-section              ← 節（段の途中で割れない）
+      ├ .gera-keys-group            ← 節の見出し「読み進める」
+      ├ .gera-keys-row              ← 一行
+      │   ├ .gera-keys-key          ← キーの箱
+      │   │   ├ .gera-keys-cap      ← キー一つ（.gera-keys-mod なら修飾キー）
+      │   │   └ .gera-keys-sep      ← 間の「+」「/」
+      │   └ .gera-keys-desc         ← 意味（.gera-keys-only の印と .gera-keys-note が付くことがある）
+      └ .gera-keys-inner            ← 道具を開いている間だけのキー
+          ├ .gera-keys-sub          ← 「検索を開いている間」
+          └ .gera-keys-row
 ```
 
-- **群ごとに格子を分けないこと。**`.gera-keys-list` を群ごとに分けたり、`.gera-keys-group` の `grid-column: 1 / -1` を外したりすると、**キーの列の幅が群ごとに変わって表記が縦に揃わなくなる。**揃っていないと、探しているキーを目で追えない
-- **`.gera-keys-hint` は薄く出してある。**これから書く紙の上に置くものなので、**書き始めた文字と競ってはならない。**濃くするなら、そこを承知の上で
+```css
+.gera-keys-box { max-width: 40rem; }              /* 箱を狭くする */
+.gera-keys-list { columns: 1; }                   /* 一段にする（縦に長くなる） */
+.gera-keys-cap { background: none; }              /* キートップの地色を消す */
+.gera-keys-row { grid-template-columns: 8rem 1fr; } /* キーの列を詰める */
+```
+
+- **一段にすると、既定のウィンドウでは収まらない。**`columns: 1` にすると中身は 900px を超え、**置ける高さ（8vh の上余白を引いた残り）は 673px しかない**ので、箱の中でスクロールすることになる。承知の上でどうぞ
+- **`.gera-keys-section` の `break-inside: avoid` を外さないこと。**外すと**節の見出しだけが段の下端に残り、その節の行が次の段の頭から始まる**
+- **`.gera-keys-row` のキーの列は固定幅である**（`max-content` ではない）。**節ごとに `max-content` にすると、節が変わるたびにキーの列の幅が変わって落ち着かない**——節が横に並んでいる以上、揃えるのは節の中である
+- **`.gera-keys-hint` は薄く出してある。**これから書く紙の上に置くものなので、**書き始めた文字と競ってはならない。**キーの地色もここでは消してある。濃くするなら、そこを承知の上で
 - **移り変わり（`transition` / `animation`）を足さないこと**（設計文書 第5-10節）
 
 ### `--font-scale` は道具に効かない

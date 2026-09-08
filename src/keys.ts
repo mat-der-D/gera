@@ -28,7 +28,7 @@
  * Why 2 is not a reuse of 1. The overlay layers over the text and demands to be
  * closed: you cannot type until it is gone. What a user can do with an empty
  * document is start writing, so a form that gets in the way of keystrokes points
- * away from the purpose. The content (`GROUPS` below) is kept as one, and only the
+ * away from the purpose. The content (`SECTIONS` below) is kept as one, and only the
  * presentation is kept as two — if the list's content were split across two places,
  * one of them would go stale.
  *
@@ -50,14 +50,33 @@ import "./keys.css";
 const MOD = /Mac|iPhone|iPad/.test(navigator.userAgent) ? "Cmd" : "Ctrl";
 
 interface Row {
-  key: string;
+  /**
+   * The spellings, one keycap per entry. `["Ctrl", "Shift", "S"]` is a chord, drawn
+   * with `+` between the caps; with `alt` it is a set of alternatives, drawn with `/`.
+   * They are split rather than kept as one string so the caps can be drawn as caps:
+   * `Ctrl+ + / − / 0` as running text cannot be read for where one key ends.
+   */
+  keys: string[];
+  /** The caps are alternatives (`/`), not a chord (`+`). */
+  alt?: boolean;
   desc: string;
+  /** The second half of a description. Shown fainter, on its own line. */
+  note?: string;
+  /** `閲覧モード` / `編集モード` — shown as a small tag after the description. */
+  only?: string;
 }
 
-interface Group {
-  /** The heading. `null` means the main list (which carries no heading). */
-  title: string | null;
+/** Keys that only exist while a tool is open. Nested under the tool that opens it. */
+interface Inner {
+  title: string;
   rows: Row[];
+}
+
+interface Section {
+  /** What the reader wants to do. See the head of `SECTIONS`. */
+  title: string;
+  rows: Row[];
+  inner?: Inner[];
 }
 
 /**
@@ -65,90 +84,177 @@ interface Group {
  * not fit on one line is left out (save conflicts and the handling of unsaved work
  * are announced by the banner at the moment they happen; main.ts).
  *
- * The spellings are copied straight from the handler in main.ts. The main list holds
- * what works in both modes, including moving through the document (§9-13: turning a
- * page moves by the same amount in either mode). Below it come the ones that only exist
- * somewhere — inside a tool, in view mode, in edit mode. Those are the kind you do not
- * suffer for not knowing but are faster for knowing, so mixing them in would make the
- * main list harder to read.
+ * The spellings are copied straight from the handlers in main.ts and editor.ts.
  *
- * `J` / `K` are the one exception inside the main list: they are aliases of the arrow
- * keys (§9-11), and in edit mode an unmodified letter is text. The row says so rather
- * than being split off, because splitting the aliases from the keys they are aliases of
- * is what makes a list hard to read.
+ * The sections are named after what the reader wants to do, not after how gera is put
+ * together (§9-14, the owner's choice on 2026-09-08 out of three drafts). Sorting by
+ * "does it work in both modes" or "what does it change" is true of gera but not of the
+ * person opening the list: what they have is 「保存したい」「先へ進みたい」「さっきの
+ * 見出しに戻りたい」. So the mode is not a section any more — where it matters it is a
+ * tag on the row (`only`), which after §9-13 is four rows in the whole list.
+ *
+ * Two consequences of naming the sections this way, both intended:
+ *
+ * - The tracker sits under 読み進める, not among the tools. It is a reading operation;
+ *   the earlier list had it next to `Mod+F` because both are "things gera provides"
+ * - The keys inside a tool sit under the tool that opens them (`inner`), so `Mod+F` and
+ *   the `Enter` / `Shift+Enter` that follow it are read in the order they are pressed
  */
-const GROUPS: Group[] = [
+const SECTIONS: Section[] = [
   {
-    title: null,
+    title: "ファイルを出し入れする",
     rows: [
-      { key: `${MOD}+O`, desc: "ファイルを開く" },
-      { key: `${MOD}+S`, desc: "保存" },
-      { key: `${MOD}+Shift+S`, desc: "名前を付けて保存" },
-      { key: `${MOD}+R`, desc: "ファイルを読み直す" },
-      { key: `${MOD}+E`, desc: "閲覧 ⇄ 編集の切り替え" },
-      { key: `${MOD}+Shift+O`, desc: "見出しへ飛ぶ" },
-      { key: `${MOD}+F`, desc: "文書内を探す" },
-      { key: "↑ ↓ / J K", desc: "一行進む（J K は閲覧モードのみ）" },
-      { key: "PageUp / PageDown", desc: `一画面進む（${MOD}+↑ ↓ / ${MOD}+J K も同じ）` },
-      { key: `${MOD}+ + / − / 0`, desc: "字の大きさ" },
-      { key: `${MOD}+,`, desc: "ユーザー CSS を読み直す" },
-      { key: `${MOD}+Shift+C`, desc: "本文全体をクリップボードへ" },
-      { key: "F1", desc: "この一覧" },
+      { keys: [MOD, "O"], desc: "ファイルを開く" },
+      { keys: [MOD, "S"], desc: "保存" },
+      { keys: [MOD, "Shift", "S"], desc: "名前を付けて保存" },
+      { keys: [MOD, "R"], desc: "ファイルを読み直す" },
+      { keys: [MOD, "Shift", "C"], desc: "本文全体をクリップボードへ" },
     ],
   },
   {
-    title: "見出しの一覧と検索の中で",
+    title: "読み進める",
     rows: [
-      { key: "↑ ↓", desc: "見出しを選ぶ" },
-      { key: "Enter", desc: "選んだ見出しへ飛ぶ／次の当たりへ" },
-      { key: "Shift+Enter", desc: "前の当たりへ" },
-      { key: "Esc", desc: "閉じる" },
+      { keys: ["↑ ↓", "J K"], alt: true, desc: "一行進む", note: "J K は閲覧モードのみ" },
+      {
+        keys: ["PageUp", "PageDown"],
+        alt: true,
+        desc: "一画面進む",
+        note: `${MOD}+↑ ↓ / ${MOD}+J K も同じ`,
+      },
+      { keys: [MOD, "L"], desc: "トラッカー", note: "読んでいる行に帯", only: "閲覧モード" },
+      {
+        keys: ["Shift", "↑ ↓ / J K"],
+        desc: "帯だけ動かす",
+        note: "紙面は動かない",
+        only: "閲覧モード",
+      },
     ],
   },
   {
-    title: "閲覧モードで",
+    title: "見つける",
     rows: [
-      { key: `${MOD}+L`, desc: "トラッカー（読んでいる行に帯）" },
-      { key: "Shift+↑ ↓ / Shift+K J", desc: "帯のほうを一行動かす（出ていなければ紙面）" },
+      { keys: [MOD, "Shift", "O"], desc: "見出しへ飛ぶ" },
+      { keys: [MOD, "F"], desc: "文書内を探す" },
+    ],
+    inner: [
+      {
+        title: "見出しの一覧を開いている間",
+        rows: [
+          { keys: ["↑", "↓"], alt: true, desc: "見出しを選ぶ" },
+          { keys: ["Enter"], desc: "その見出しへ飛ぶ" },
+          { keys: ["Esc"], desc: "閉じる" },
+        ],
+      },
+      {
+        title: "検索を開いている間",
+        rows: [
+          { keys: ["Enter"], desc: "次の当たりへ" },
+          { keys: ["Shift", "Enter"], desc: "前の当たりへ" },
+          { keys: ["Esc"], desc: "閉じる" },
+        ],
+      },
     ],
   },
   {
-    title: "編集モードで",
+    title: "画面を変える",
     rows: [
-      { key: `${MOD}+Z`, desc: "元に戻す" },
-      { key: `${MOD}+Shift+Z`, desc: "やり直す" },
+      { keys: [MOD, "E"], desc: "閲覧 ⇄ 編集の切り替え" },
+      { keys: [MOD, "+ / − / 0"], desc: "字の大きさ" },
+      { keys: [MOD, ","], desc: "ユーザー CSS を読み直す" },
+      { keys: ["F1"], desc: "この一覧" },
+    ],
+  },
+  {
+    title: "書き直す",
+    rows: [
+      { keys: [MOD, "Z"], desc: "元に戻す", only: "編集モード" },
+      { keys: [MOD, "Shift", "Z"], desc: "やり直す", only: "編集モード" },
     ],
   },
 ];
+
+/** Whether this cap is a modifier. Modifiers are drawn fainter — what is pressed for
+ * meaning is the last cap, and the modifiers are how it is reached. */
+const MODIFIER = /^(Ctrl|Cmd|Shift|Alt)$/;
+
+/** One row: the caps on the left, what it does on the right. */
+function buildRow(row: Row): HTMLElement {
+  const el = document.createElement("div");
+  el.className = "gera-keys-row";
+
+  const keys = document.createElement("div");
+  keys.className = "gera-keys-key";
+  row.keys.forEach((spelling, i) => {
+    if (i > 0) {
+      const sep = document.createElement("span");
+      sep.className = "gera-keys-sep";
+      sep.textContent = row.alt ? "/" : "+";
+      keys.append(sep);
+    }
+    const cap = document.createElement("span");
+    cap.className = MODIFIER.test(spelling) ? "gera-keys-cap gera-keys-mod" : "gera-keys-cap";
+    cap.textContent = spelling;
+    keys.append(cap);
+  });
+
+  const desc = document.createElement("div");
+  desc.className = "gera-keys-desc";
+  desc.append(row.desc);
+  if (row.only) {
+    const tag = document.createElement("span");
+    tag.className = "gera-keys-only";
+    tag.textContent = row.only;
+    desc.append(tag);
+  }
+  if (row.note) {
+    const note = document.createElement("span");
+    note.className = "gera-keys-note";
+    note.textContent = row.note;
+    desc.append(note);
+  }
+
+  el.append(keys, desc);
+  return el;
+}
 
 /**
  * Builds the list itself. The overlay and the quiet list use the very same one (see
  * the head of this file).
  *
- * One grid is kept across all groups. Splitting the grid per group would make the
- * width of the key column vary from group to group, and the spellings would not line
- * up vertically. Unaligned, the eye cannot track down the key it is looking for (the
- * group heading spans both columns instead; keys.css).
+ * The sections are laid out in two columns by CSS (`columns: 2`; keys.css), not by
+ * building two containers here. The quiet list on an empty document is bound to the
+ * width of the text column and drops to one column there — a DOM built as two columns
+ * could not do that, and the two forms have to stay one list (head of this file).
+ *
+ * Each section is a grid of its own. The earlier list kept one grid across the whole
+ * thing so that every spelling lined up vertically; with sections side by side there is
+ * no single column to line up in, and alignment inside a section is what the eye uses.
  */
 function buildList(): HTMLElement {
   const list = document.createElement("div");
   list.className = "gera-keys-list";
-  for (const group of GROUPS) {
-    if (group.title) {
-      const head = document.createElement("div");
-      head.className = "gera-keys-group";
-      head.textContent = group.title;
-      list.append(head);
+  for (const section of SECTIONS) {
+    const el = document.createElement("div");
+    el.className = "gera-keys-section";
+
+    const head = document.createElement("div");
+    head.className = "gera-keys-group";
+    head.textContent = section.title;
+    el.append(head);
+    for (const row of section.rows) el.append(buildRow(row));
+
+    for (const inner of section.inner ?? []) {
+      const box = document.createElement("div");
+      box.className = "gera-keys-inner";
+      const title = document.createElement("div");
+      title.className = "gera-keys-sub";
+      title.textContent = inner.title;
+      box.append(title);
+      for (const row of inner.rows) box.append(buildRow(row));
+      el.append(box);
     }
-    for (const row of group.rows) {
-      const key = document.createElement("div");
-      key.className = "gera-keys-key";
-      key.textContent = row.key;
-      const desc = document.createElement("div");
-      desc.className = "gera-keys-desc";
-      desc.textContent = row.desc;
-      list.append(key, desc);
-    }
+
+    list.append(el);
   }
   return list;
 }

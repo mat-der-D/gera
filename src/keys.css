@@ -42,7 +42,7 @@
 
 .gera-keys-box {
   width: 100%;
-  max-width: 30rem;
+  max-width: 48rem;
   max-height: 100%;
   box-sizing: border-box;
   overflow-y: auto;
@@ -58,43 +58,138 @@
 
 /* ------------------------------------------------------------- The list body */
 
-/* Keys and meanings are aligned in two columns. Unaligned, the eye cannot track down
-   the key it is looking for. The left column is sized by its content
-   (`max-content`), so the column does not move with the length of a spelling. */
+/* Two columns of sections (§9-14). The sections are named after what the reader wants
+   to do, and there are five of them, so stacking them in one column makes the box taller
+   than the window: measured, the flat list was 910px of content in the 673px the overlay
+   can give it, and the last section could only be reached by scrolling.
+
+   Laid out with `columns` rather than a grid of two containers, because the same list is
+   also shown inside the text column on an empty document, where it has to fall back to
+   one column (bottom of this file). A DOM built as two columns could not do that, and
+   the two forms have to stay one list (keys.ts). */
 .gera-keys-list {
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  column-gap: 1.2rem;
-  row-gap: 0.15rem;
-  align-items: baseline;
+  columns: 2;
+  column-gap: 1.6rem;
 }
 
-/* Key spellings are monospaced. They are the characters you actually type, so in the
-   same typeface as running text they would be lost in it. The color is `--accent` —
-   the color gera uses for "this is the point" (style.css). */
+/* A section never straddles the column break: its heading has to stay with its rows. */
+.gera-keys-section {
+  break-inside: avoid;
+  /* `break-inside` is honoured by the fragmenter, not by margins, so the space between
+     sections is put below rather than above — a top margin on the first section of the
+     second column would push it away from the top of the column. */
+  margin: 0 0 0.75rem;
+}
+
+/* One row. The key column is a fixed width rather than `max-content`: with sections side
+   by side there is no single column for the spellings to line up in, and a per-section
+   `max-content` would make the width jump from section to section. The width fits
+   `Ctrl+Shift+S`, the longest chord on the list. */
+.gera-keys-row {
+  display: grid;
+  grid-template-columns: 9.4rem 1fr;
+  column-gap: 0.85rem;
+  align-items: baseline;
+  padding: 0.11rem 0;
+}
+
+/* The keys are drawn as keys. Written as running text (`Ctrl+ + / − / 0`) the pluses and
+   slashes cannot be read for where one key ends and the next begins; drawn as caps, the
+   shape carries it and nothing has to be parsed. */
 .gera-keys-key {
-  font: 0.85rem/1.8 var(--font-mono);
-  color: var(--accent);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.22rem;
+}
+
+.gera-keys-cap {
+  display: inline-flex;
+  align-items: center;
+  font: 500 0.78rem/1 var(--font-mono);
+  color: var(--fg);
+  background: var(--code-bg);
+  border: 1px solid var(--rule);
+  /* A slightly thicker bottom edge. It is the whole of the "key" look — no shadow, no
+     gradient, nothing that has to be repainted. */
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 0.24rem 0.4rem;
   white-space: nowrap;
+}
+
+/* Modifiers are drawn fainter. What is pressed for meaning is the last cap; the
+   modifiers are how it is reached. */
+.gera-keys-mod {
+  color: var(--dim);
+}
+
+/* The `+` between caps of one chord, and the `/` between alternatives. */
+.gera-keys-sep {
+  font: 0.75rem/1 var(--font-sans);
+  color: var(--dim);
+  padding: 0 0.1rem;
 }
 
 /* Meanings are set in the sans-serif (gothic) face. Only the prose is set in the
    serif (mincho) face, and that is itself the mode indicator (§5). */
 .gera-keys-desc {
-  font: 0.9rem/1.8 var(--font-sans);
+  font: 0.86rem/1.5 var(--font-sans);
   color: var(--fg);
 }
 
-/* The group heading. All it needs is to differ from the main list, so it goes no
-   further than smaller and fainter. It spans both columns: splitting the grid per
-   group would make the width of the key column vary from group to group, and the
-   spellings would stop lining up vertically (buildList in keys.ts). */
+/* The second half of a meaning — the part you do not read while hunting for a key.
+   On its own line and fainter, so the column being scanned stays one line per row. */
+.gera-keys-note {
+  display: block;
+  font-size: 0.76rem;
+  line-height: 1.45;
+  color: var(--dim);
+}
+
+/* `閲覧モード` / `編集モード`. Four rows on the whole list carry one (§9-13 left the mode
+   with almost nothing), which is exactly why it is a tag and not a section. */
+.gera-keys-only {
+  display: inline-block;
+  font: 0.66rem/1.5 var(--font-sans);
+  letter-spacing: 0.02em;
+  color: var(--dim);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 0 0.28rem;
+  margin-left: 0.4rem;
+  vertical-align: 0.08em;
+  white-space: nowrap;
+}
+
+/* The section heading — what the reader wants to do (`ファイルを出し入れする` and so on).
+   Darker than the rows' second lines: this is the word being looked for. */
 .gera-keys-group {
-  grid-column: 1 / -1;
-  font: 0.75rem/1.6 var(--font-sans);
+  font: 500 0.82rem/1.6 var(--font-sans);
+  color: var(--fg);
+  margin: 0 0 0.3rem;
+}
+
+/* Keys that only exist while a tool is open, nested under the tool that opens it, so
+   `Mod+F` and the `Enter` that follows it are read in the order they are pressed. The
+   rule at the left is what says "these belong to the row above". */
+.gera-keys-inner {
+  margin: 0.35rem 0 0 0.2rem;
+  padding-left: 0.7rem;
+  border-left: 2px solid var(--rule);
+}
+.gera-keys-inner .gera-keys-row {
+  grid-template-columns: 8rem 1fr;
+  padding: 0.06rem 0;
+}
+
+/* The heading inside that nesting. Fainter than a section heading — it names a state
+   ("while this is open"), not something to go looking for. */
+.gera-keys-sub {
+  font: 0.72rem/1.7 var(--font-sans);
   letter-spacing: 0.04em;
   color: var(--dim);
-  margin: 1.1rem 0 0.35rem;
+  margin: 0.2rem 0 0.1rem;
 }
 
 /* --------------------------- The quiet list on an empty document */
@@ -134,12 +229,27 @@
   pointer-events: none;
 }
 
+/* One column here, whatever the overlay does. The width is the text column's, and two
+   columns inside it would leave a key column of about 10rem with nothing to say in it
+   (the overlay gets the whole window and can afford two; keys.css above). */
+.gera-keys-hint .gera-keys-list {
+  columns: 1;
+}
+
 /* Shown fainter still than in the overlay. It lies on the paper about to be written
    on, so it must not compete with the characters once writing starts. It is
-   something that disappears when you type, not something meant to be read. */
-.gera-keys-hint .gera-keys-key,
-.gera-keys-hint .gera-keys-desc {
+   something that disappears when you type, not something meant to be read.
+
+   The caps lose their fill here for the same reason: on paper about to be written on, a
+   row of filled boxes is the loudest thing on screen. The outline alone keeps the shape
+   that says "this is a key". */
+.gera-keys-hint .gera-keys-desc,
+.gera-keys-hint .gera-keys-cap {
   color: var(--dim);
+}
+.gera-keys-hint .gera-keys-cap {
+  background: none;
+  border-color: color-mix(in srgb, var(--rule) 70%, var(--bg));
 }
 .gera-keys-hint .gera-keys-group {
   color: color-mix(in srgb, var(--dim) 70%, var(--bg));
