@@ -42,7 +42,14 @@
 
 .gera-keys-box {
   width: 100%;
-  max-width: 48rem;
+  /* Widened from 48rem on 2026-09-08. At 48rem a section column gives the meaning
+     about 185px, and `トラッカー表示/非表示` plus its `閲覧モード` tag needs about 210px:
+     the tag was pushed onto a line of its own and the row stood three lines tall.
+     Every row on this list is meant to be one line (head of keys.ts), so the box was
+     widened rather than the wording cut. Widened again to 56rem when `PageUp` and
+     `Pg Dn` took their second spellings into the key column (below). 56rem = 896px
+     inside a 980px window, against 1.5rem of padding a side. */
+  max-width: 56rem;
   max-height: 100%;
   box-sizing: border-box;
   overflow-y: auto;
@@ -54,6 +61,33 @@
      continuous with the text. A shadow lifts it one layer up. */
   box-shadow: 0 0.5rem 2rem color-mix(in srgb, var(--fg) 20%, transparent);
   outline: none; /* it carries tabindex to receive focus, but shows no focus ring */
+}
+
+/* ------------------------------------------------------------ The heading */
+
+/* The heading of the list, in both forms (keys.ts `buildHead`). It sits outside
+   `.gera-keys-list` because that element is a two-column fragmenter. */
+.gera-keys-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.7rem;
+  margin: 0 0 0.8rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+.gera-keys-title {
+  font: 500 0.95rem/1.4 var(--font-sans);
+  color: var(--fg);
+}
+
+/* How to summon it. Fainter than the title — it is read once and never again. */
+.gera-keys-how {
+  font: 0.72rem/1.4 var(--font-sans);
+  color: var(--dim);
+}
+.gera-keys-how .gera-keys-cap {
+  margin-right: 0.2rem;
 }
 
 /* ------------------------------------------------------------- The list body */
@@ -87,7 +121,14 @@
    `Ctrl+Shift+S`, the longest chord on the list. */
 .gera-keys-row {
   display: grid;
-  grid-template-columns: 9.4rem 1fr;
+  /* 11rem holds `Pg Dn / Ctrl + ↓ / J`, the widest cell on the list since the paging
+     rows took their second spellings out of the note and into the keys (2026-09-08).
+     At the old 9.4rem it wrapped and left the `/` dangling at the end of the first line.
+     The modifier is a cap of its own here as everywhere else, which is what makes the
+     cell wide — the width follows from that rule, not the other way round. The box was
+     widened alongside it, so the meanings still have more room than the longest of them
+     needs (223px against 211px). */
+  grid-template-columns: 11rem 1fr;
   column-gap: 0.85rem;
   align-items: baseline;
   padding: 0.11rem 0;
@@ -101,6 +142,10 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 0.22rem;
+  /* Should a row's alternatives ever not fit on one line, they wrap here. Slightly more
+     room between the lines than between the caps, so the second line reads as a
+     continuation rather than as another row. */
+  row-gap: 0.3rem;
 }
 
 .gera-keys-cap {
@@ -116,6 +161,15 @@
   border-radius: 4px;
   padding: 0.24rem 0.4rem;
   white-space: nowrap;
+}
+
+/* One item of the key cell, together with the separator that leads it. Boxing them
+   this way means a wrap of the cell can only break between items: no separator is left
+   dangling at the end of a line, and `Ctrl+K` never splits across two lines. */
+.gera-keys-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.22rem;
 }
 
 /* Modifiers are drawn fainter. What is pressed for meaning is the last cap; the
@@ -162,7 +216,7 @@
   white-space: nowrap;
 }
 
-/* The section heading — what the reader wants to do (`ファイルを出し入れする` and so on).
+/* The section heading — what the reader wants to do (`ファイル操作` and so on).
    Darker than the rows' second lines: this is the word being looked for. */
 .gera-keys-group {
   font: 500 0.82rem/1.6 var(--font-sans);
@@ -174,7 +228,10 @@
    `Mod+F` and the `Enter` that follows it are read in the order they are pressed. The
    rule at the left is what says "these belong to the row above". */
 .gera-keys-inner {
-  margin: 0.35rem 0 0 0.2rem;
+  /* Space below as well as above: the block is now followed by the next top-level row
+     of the section (`Mod+F` comes straight after the outline list's keys), and without
+     it that row reads as one more entry of the block above. */
+  margin: 0.35rem 0 0.4rem 0.2rem;
   padding-left: 0.7rem;
   border-left: 2px solid var(--rule);
 }
@@ -183,12 +240,14 @@
   padding: 0.06rem 0;
 }
 
-/* The heading inside that nesting. Fainter than a section heading — it names a state
-   ("while this is open"), not something to go looking for. */
+/* The heading inside that nesting. Same colour as a section heading (the owner's
+   instruction, 2026-09-08): it names a place you can be — 見出し一覧, 検索 — just as
+   the section headings do, and drawn faint it read as a footnote to the row above.
+   It stays smaller, which is what keeps the nesting legible. */
 .gera-keys-sub {
   font: 0.72rem/1.7 var(--font-sans);
   letter-spacing: 0.04em;
-  color: var(--dim);
+  color: var(--fg);
   margin: 0.2rem 0 0.1rem;
 }
 
@@ -251,6 +310,13 @@
   background: none;
   border-color: color-mix(in srgb, var(--rule) 70%, var(--bg));
 }
-.gera-keys-hint .gera-keys-group {
+.gera-keys-hint .gera-keys-group,
+.gera-keys-hint .gera-keys-sub {
   color: color-mix(in srgb, var(--dim) 70%, var(--bg));
+}
+.gera-keys-hint .gera-keys-title {
+  color: var(--dim);
+}
+.gera-keys-hint .gera-keys-head {
+  border-bottom-color: color-mix(in srgb, var(--rule) 70%, var(--bg));
 }

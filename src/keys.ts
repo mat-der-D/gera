@@ -49,14 +49,27 @@ import "./keys.css";
  */
 const MOD = /Mac|iPhone|iPad/.test(navigator.userAgent) ? "Cmd" : "Ctrl";
 
+/**
+ * One item of `Row.keys`: a single cap, or a chord of caps drawn with `+` between
+ * them. The nested form exists for rows that are alternatives *of chords* —
+ * `Pg Up / Ctrl + ↑ / K` — where the outer separator is `/` and the inner one is `+`.
+ * Writing such a chord as one string (`"Ctrl+↑ / K"`) would draw `Ctrl` inside the same
+ * keycap as the keys it modifies, and every other row on the list draws it as its own
+ * cap, faint (`.gera-keys-mod`). The list is read by shape, so one row spelling a
+ * modifier differently is a row that has to be parsed (the owner's correction,
+ * 2026-09-08).
+ */
+type Cap = string | string[];
+
 interface Row {
   /**
    * The spellings, one keycap per entry. `["Ctrl", "Shift", "S"]` is a chord, drawn
    * with `+` between the caps; with `alt` it is a set of alternatives, drawn with `/`.
+   * An item may itself be a chord (`["Pg Up", ["Ctrl", "↑"]]` with `alt`).
    * They are split rather than kept as one string so the caps can be drawn as caps:
    * `Ctrl+ + / − / 0` as running text cannot be read for where one key ends.
    */
-  keys: string[];
+  keys: Cap[];
   /** The caps are alternatives (`/`), not a chord (`+`). */
   alt?: boolean;
   desc: string;
@@ -64,9 +77,17 @@ interface Row {
   note?: string;
   /** `閲覧モード` / `編集モード` — shown as a small tag after the description. */
   only?: string;
+  /**
+   * The keys that exist only while this row's tool is open, drawn directly beneath
+   * it. Hanging them off the row rather than off the section is what puts them in
+   * the order they are pressed: `Mod+Shift+O`, then what to press while the outline
+   * list is up, then `Mod+F`, then what to press while the search box is up (the
+   * owner's ordering, 2026-09-08).
+   */
+  inner?: Inner;
 }
 
-/** Keys that only exist while a tool is open. Nested under the tool that opens it. */
+/** Keys that only exist while a tool is open. Nested under the row that opens it. */
 interface Inner {
   title: string;
   rows: Row[];
@@ -76,7 +97,6 @@ interface Section {
   /** What the reader wants to do. See the head of `SECTIONS`. */
   title: string;
   rows: Row[];
-  inner?: Inner[];
 }
 
 /**
@@ -86,72 +106,77 @@ interface Section {
  *
  * The spellings are copied straight from the handlers in main.ts and editor.ts.
  *
- * The sections are named after what the reader wants to do, not after how gera is put
- * together (§9-14, the owner's choice on 2026-09-08 out of three drafts). Sorting by
- * "does it work in both modes" or "what does it change" is true of gera but not of the
- * person opening the list: what they have is 「保存したい」「先へ進みたい」「さっきの
- * 見出しに戻りたい」. So the mode is not a section any more — where it matters it is a
- * tag on the row (`only`), which after §9-13 is four rows in the whole list.
+ * The sections are grouped by what the reader wants to do, not by how gera is put
+ * together (§9-14). Sorting by "does it work in both modes" or "what does it change" is
+ * true of gera but not of the person opening the list: what they have is 「保存したい」
+ * 「先へ進みたい」「さっきの見出しに戻りたい」. So the mode is not a section any more —
+ * where it matters it is a tag on the row (`only`), which after §9-13 is four rows in
+ * the whole list.
  *
- * Two consequences of naming the sections this way, both intended:
+ * The five titles themselves were given by the owner on 2026-09-08, after a round of
+ * proposals on the Japanese wording. They are not all verbs (「ファイル操作」「編集する」):
+ * the grouping is by intent, and how each group is spelled was the owner's call.
  *
- * - The tracker sits under 読み進める, not among the tools. It is a reading operation;
+ * Two consequences of grouping this way, both intended:
+ *
+ * - The tracker sits under 読む, not among the tools. It is a reading operation;
  *   the earlier list had it next to `Mod+F` because both are "things gera provides"
- * - The keys inside a tool sit under the tool that opens them (`inner`), so `Mod+F` and
- *   the `Enter` / `Shift+Enter` that follow it are read in the order they are pressed
+ * - The keys inside a tool sit under the row that opens them (`Row.inner`), so `Mod+F`
+ *   and the `Enter` / `Shift+Enter` that follow it are read in the order they are
+ *   pressed. They hang off the row, not off the section, so 探す reads straight down:
+ *   `Mod+Shift+O` → the outline list's keys → `Mod+F` → the search box's keys
  */
 const SECTIONS: Section[] = [
   {
-    title: "ファイルを出し入れする",
+    title: "ファイル操作",
     rows: [
-      { keys: [MOD, "O"], desc: "ファイルを開く" },
-      { keys: [MOD, "S"], desc: "保存" },
+      { keys: [MOD, "O"], desc: "開く" },
+      { keys: [MOD, "S"], desc: "上書き保存" },
       { keys: [MOD, "Shift", "S"], desc: "名前を付けて保存" },
-      { keys: [MOD, "R"], desc: "ファイルを読み直す" },
-      { keys: [MOD, "Shift", "C"], desc: "本文全体をクリップボードへ" },
+      { keys: [MOD, "R"], desc: "再読み込み" },
+      { keys: [MOD, "Shift", "C"], desc: "本文全体をコピー" },
     ],
   },
   {
-    title: "読み進める",
+    title: "読む",
     rows: [
-      { keys: ["↑ ↓", "J K"], alt: true, desc: "一行進む", note: "J K は閲覧モードのみ" },
-      {
-        keys: ["PageUp", "PageDown"],
-        alt: true,
-        desc: "一画面進む",
-        note: `${MOD}+↑ ↓ / ${MOD}+J K も同じ`,
-      },
-      { keys: [MOD, "L"], desc: "トラッカー", note: "読んでいる行に帯", only: "閲覧モード" },
-      {
-        keys: ["Shift", "↑ ↓ / J K"],
-        desc: "帯だけ動かす",
-        note: "紙面は動かない",
-        only: "閲覧モード",
-      },
+      // The caveat is about the bare letters: `Mod+J` / `Mod+K` are bound in both modes
+      // (`pageBy` in editor.ts), so the paging rows below carry none.
+      { keys: ["↑", "K"], alt: true, desc: "一行戻る", note: "K は閲覧モードのみ" },
+      { keys: ["↓", "J"], alt: true, desc: "一行進む", note: "J は閲覧モードのみ" },
+      { keys: ["Pg Up", [MOD, "↑ / K"]], alt: true, desc: "一画面戻る" },
+      { keys: ["Pg Dn", [MOD, "↓ / J"]], alt: true, desc: "一画面進む" },
+      { keys: [MOD, "L"], desc: "トラッカー表示/非表示", only: "閲覧モード" },
+      { keys: ["Shift", "↑ / K"], desc: "トラッカーを戻す", only: "閲覧モード" },
+      { keys: ["Shift", "↓ / J"], desc: "トラッカーを進める", only: "閲覧モード" },
     ],
   },
   {
-    title: "見つける",
+    title: "探す",
     rows: [
-      { keys: [MOD, "Shift", "O"], desc: "見出しへ飛ぶ" },
-      { keys: [MOD, "F"], desc: "文書内を探す" },
-    ],
-    inner: [
       {
-        title: "見出しの一覧を開いている間",
-        rows: [
-          { keys: ["↑", "↓"], alt: true, desc: "見出しを選ぶ" },
-          { keys: ["Enter"], desc: "その見出しへ飛ぶ" },
-          { keys: ["Esc"], desc: "閉じる" },
-        ],
+        keys: [MOD, "Shift", "O"],
+        desc: "見出し一覧を表示",
+        inner: {
+          title: "見出し一覧",
+          rows: [
+            { keys: ["↑", "↓"], alt: true, desc: "見出しを選ぶ" },
+            { keys: ["Enter"], desc: "その見出しへ飛ぶ" },
+            { keys: ["Esc"], desc: "閉じる" },
+          ],
+        },
       },
       {
-        title: "検索を開いている間",
-        rows: [
-          { keys: ["Enter"], desc: "次の当たりへ" },
-          { keys: ["Shift", "Enter"], desc: "前の当たりへ" },
-          { keys: ["Esc"], desc: "閉じる" },
-        ],
+        keys: [MOD, "F"],
+        desc: "文書内を検索",
+        inner: {
+          title: "検索",
+          rows: [
+            { keys: ["Enter"], desc: "次の一致へ" },
+            { keys: ["Shift", "Enter"], desc: "前の一致へ" },
+            { keys: ["Esc"], desc: "閉じる" },
+          ],
+        },
       },
     ],
   },
@@ -159,13 +184,12 @@ const SECTIONS: Section[] = [
     title: "画面を変える",
     rows: [
       { keys: [MOD, "E"], desc: "閲覧 ⇄ 編集の切り替え" },
-      { keys: [MOD, "+ / − / 0"], desc: "字の大きさ" },
-      { keys: [MOD, ","], desc: "ユーザー CSS を読み直す" },
-      { keys: ["F1"], desc: "この一覧" },
+      { keys: [MOD, "+ / − / 0"], desc: "字の大きさの変更" },
+      { keys: [MOD, ","], desc: "ユーザー CSS を再読み込み" },
     ],
   },
   {
-    title: "書き直す",
+    title: "編集する",
     rows: [
       { keys: [MOD, "Z"], desc: "元に戻す", only: "編集モード" },
       { keys: [MOD, "Shift", "Z"], desc: "やり直す", only: "編集モード" },
@@ -177,6 +201,22 @@ const SECTIONS: Section[] = [
  * meaning is the last cap, and the modifiers are how it is reached. */
 const MODIFIER = /^(Ctrl|Cmd|Shift|Alt)$/;
 
+/** One keycap. Modifiers are drawn fainter (see `MODIFIER`). */
+function buildCap(spelling: string): HTMLElement {
+  const cap = document.createElement("span");
+  cap.className = MODIFIER.test(spelling) ? "gera-keys-cap gera-keys-mod" : "gera-keys-cap";
+  cap.textContent = spelling;
+  return cap;
+}
+
+/** The `+` between the caps of a chord, or the `/` between alternatives. */
+function buildSep(text: string): HTMLElement {
+  const sep = document.createElement("span");
+  sep.className = "gera-keys-sep";
+  sep.textContent = text;
+  return sep;
+}
+
 /** One row: the caps on the left, what it does on the right. */
 function buildRow(row: Row): HTMLElement {
   const el = document.createElement("div");
@@ -184,17 +224,19 @@ function buildRow(row: Row): HTMLElement {
 
   const keys = document.createElement("div");
   keys.className = "gera-keys-key";
-  row.keys.forEach((spelling, i) => {
-    if (i > 0) {
-      const sep = document.createElement("span");
-      sep.className = "gera-keys-sep";
-      sep.textContent = row.alt ? "/" : "+";
-      keys.append(sep);
+  // Every item is boxed, with its own leading separator inside the box. The cell can
+  // then wrap without a separator ever being left dangling at the end of a line, and
+  // without a chord being split from the modifier that belongs to it: the only place a
+  // line can break is between two items.
+  row.keys.forEach((item, i) => {
+    const box = document.createElement("span");
+    box.className = "gera-keys-item";
+    if (i > 0) box.append(buildSep(row.alt ? "/" : "+"));
+    for (const [j, spelling] of (typeof item === "string" ? [item] : item).entries()) {
+      if (j > 0) box.append(buildSep("+"));
+      box.append(buildCap(spelling));
     }
-    const cap = document.createElement("span");
-    cap.className = MODIFIER.test(spelling) ? "gera-keys-cap gera-keys-mod" : "gera-keys-cap";
-    cap.textContent = spelling;
-    keys.append(cap);
+    keys.append(box);
   });
 
   const desc = document.createElement("div");
@@ -215,6 +257,53 @@ function buildRow(row: Row): HTMLElement {
 
   el.append(keys, desc);
   return el;
+}
+
+/** The block of keys that exist only while one row's tool is open. */
+function buildInner(inner: Inner): HTMLElement {
+  const box = document.createElement("div");
+  box.className = "gera-keys-inner";
+
+  const title = document.createElement("div");
+  title.className = "gera-keys-sub";
+  title.textContent = inner.title;
+  box.append(title);
+
+  for (const row of inner.rows) box.append(buildRow(row));
+  return box;
+}
+
+/**
+ * The heading of the list itself, shown above the sections in both forms.
+ *
+ * Added on 2026-09-08 at the owner's instruction. It replaces the row that used to
+ * read `F1 — この一覧`: a row inside the list saying how the list is summoned is one
+ * of the entries you have to read past, whereas the same thing said in the heading is
+ * read by anyone who looks at the list at all. Naming the key here also gives the
+ * overlay's own way out, which no row carried before (`Esc` closes it too, but `F1` is
+ * the one already in the fingers).
+ *
+ * It is built as a sibling of `.gera-keys-list`, not inside it: the list is a
+ * two-column fragmenter (`columns: 2`; keys.css), and a heading placed in it would be
+ * laid out as part of that flow.
+ */
+function buildHead(): HTMLElement {
+  const head = document.createElement("div");
+  head.className = "gera-keys-head";
+
+  const title = document.createElement("span");
+  title.className = "gera-keys-title";
+  title.textContent = "キー一覧";
+
+  const how = document.createElement("span");
+  how.className = "gera-keys-how";
+  const cap = document.createElement("span");
+  cap.className = "gera-keys-cap";
+  cap.textContent = "F1";
+  how.append(cap, " で開く・閉じる");
+
+  head.append(title, how);
+  return head;
 }
 
 /**
@@ -241,17 +330,9 @@ function buildList(): HTMLElement {
     head.className = "gera-keys-group";
     head.textContent = section.title;
     el.append(head);
-    for (const row of section.rows) el.append(buildRow(row));
-
-    for (const inner of section.inner ?? []) {
-      const box = document.createElement("div");
-      box.className = "gera-keys-inner";
-      const title = document.createElement("div");
-      title.className = "gera-keys-sub";
-      title.textContent = inner.title;
-      box.append(title);
-      for (const row of inner.rows) box.append(buildRow(row));
-      el.append(box);
+    for (const row of section.rows) {
+      el.append(buildRow(row));
+      if (row.inner) el.append(buildInner(row.inner));
     }
 
     list.append(el);
@@ -304,7 +385,7 @@ export function open(opts: KeysOptions): void {
   // counted on one's fingers), so the box itself receives focus. Without focus,
   // `Esc` and `↑↓` never reach this element.
   box.tabIndex = -1;
-  box.append(buildList());
+  box.append(buildHead(), buildList());
 
   root.append(box);
   document.body.append(root);
@@ -343,7 +424,7 @@ export function showHint(parent: HTMLElement): void {
   if (!hint) {
     hint = document.createElement("div");
     hint.className = "gera-keys-hint";
-    hint.append(buildList());
+    hint.append(buildHead(), buildList());
   }
   parent.append(hint);
 }
