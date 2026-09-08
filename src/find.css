@@ -70,9 +70,8 @@
 /* ------------------------------------------------------------ Highlighting hits */
 
 /* Colour without rewriting the document DOM (CSS Custom Highlight API). With a
-   `<mark>` wrapping approach, both the `data-line` correspondence (§6) and the
-   replacement done by `renderFragment` (local editing) would break, because the
-   shape changes by exactly the wrapper. Highlighting is kept entirely within the
+   `<mark>` wrapping approach the `data-line` correspondence (§6) would break, because
+   the shape changes by exactly the wrapper. Highlighting is kept entirely within the
    presentation layer.
 
    This is a view-mode-only mechanism. In edit mode, hits are shown as CodeMirror

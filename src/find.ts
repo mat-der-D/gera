@@ -307,9 +307,8 @@ function onKey(e: KeyboardEvent): void {
  * In view mode, colour the hit and jump to it.
  *
  * The document DOM is not rewritten (CSS Custom Highlight API). Wrapping in `<mark>`
- * would break both the `data-line` correspondence (§6) and the block replacement
- * done by `renderFragment` (local editing), because the shape changes by exactly the
- * wrapper. Highlighting is kept entirely within the presentation layer. Where the
+ * would break the `data-line` correspondence (§6), because the shape changes by exactly
+ * the wrapper. Highlighting is kept entirely within the presentation layer. Where the
  * API is unavailable we give up only the highlight — jumping still works, so the
  * tool does not die.
  *

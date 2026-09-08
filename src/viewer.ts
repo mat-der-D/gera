@@ -46,12 +46,15 @@ const katexPlugin =
 /**
  * Embed the source line range into block elements.
  *
- * This is the only link between viewer mode and the raw source, and it supports three
- * uses at once. First, keeping the same place in view when switching modes (§5).
- * Second, the block-level local editing to be added later — the start line alone is not
- * enough, we also need to know where the block ends, so the end line is emitted too.
- * Third, letting reading aids (an outline and so on) pull headings and positions out of
- * the DOM.
+ * This is the only link between viewer mode and the raw source. `data-line` has two
+ * readers: keeping the same place in view when switching modes (§5), and letting reading
+ * aids (an outline and so on) pull headings and positions out of the DOM.
+ *
+ * `data-line-end` has none. It was emitted for the block-level local editing that was
+ * meant to come, which needed to know where a block ends and not only where it starts —
+ * and local editing was withdrawn on 2026-09-08 (§9-15). It is kept because it is part
+ * of the DOM that docs/CSS.md hands to whoever writes user CSS, not because anything in
+ * here uses it.
  *
  * A markdown-it block token holds [start, end) in `map`, zero-based. The end is passed
  * through exclusive, unaltered — process it and the consumer can no longer confirm the
@@ -400,9 +403,10 @@ let body: HTMLElement | null = null;
 /**
  * Turn Markdown into HTML and return along with it the math left "to typeset later".
  *
- * Do not split the path between full text and fragments (local editing) — split it and
- * one of them could end up skipping sanitization. Actually typesetting the math is the
- * caller's job.
+ * Every path that turns Markdown into HTML goes through here. Should a second one ever
+ * be wanted — re-rendering a single block, say — it must come through this function too,
+ * because a path of its own is a path that can end up skipping sanitization. Actually
+ * typesetting the math is the caller's job.
  */
 function build(markdown: string): {
   html: string;
@@ -467,24 +471,6 @@ function fill(el: HTMLElement, math: (() => string)[]): void {
 }
 
 /**
- * Turn a single Markdown fragment into HTML. It goes through the same converter and the
- * same sanitization as the full text.
- *
- * This is for block-level local editing, to re-render only the block that changed.
- */
-export function renderFragment(markdown: string): string {
-  const { html, math } = build(markdown);
-  if (!math.length) return html; // With no math at all, nothing needs putting back
-  // A fragment is typeset in full on the spot. This is the path for re-rendering the one
-  // block fixed by a local edit, and the person being kept waiting is in front of the
-  // screen. There is no off-screen part to defer.
-  const box = document.createElement("div");
-  box.innerHTML = html;
-  for (const el of box.querySelectorAll<HTMLElement>("[data-math]")) fill(el, math);
-  return box.innerHTML;
-}
-
-/**
  * Re-render the body text.
  *
  * Do nothing if the text is unchanged. Going back and forth between viewing and editing
@@ -509,9 +495,9 @@ export function renderInto(scroller: HTMLElement, text: string): void {
     // conversion.
     headingsText = text;
     headings = found;
-    // Top-level blocks sit flat, directly under .gera-doc. Keep it in a shape where
-    // swapping a single block with replaceWith does not break anything (for local
-    // editing).
+    // Top-level blocks sit flat, directly under .gera-doc. Keep it that way: the block
+    // directly under .gera-doc is the unit that `content-visibility` works on
+    // (viewer.css) and the unit deferred work is grouped by (`blockOf`).
     body.innerHTML = html;
     fillBlocks(scroller, body, math, diagrams);
   }
