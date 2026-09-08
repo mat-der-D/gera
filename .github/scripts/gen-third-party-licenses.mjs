@@ -38,6 +38,23 @@ function licenceTexts(dir) {
     .map((name) => ({ name, text: fs.readFileSync(path.join(dir, name), 'utf8').trimEnd() }))
 }
 
+// **`package.json` に `license` を書いていないパッケージの逃げ道。**
+//
+// 名乗りが無いものは下の `section` が落とす——**条件が分からないものを黙って
+// 配らない**ためで、その関門は残す。ただし **`license` ファイルは同梱していて、
+// そこに条件が書いてある**という形が実在する。落ちたままでは配れないので、
+// **人が本文を読んで確かめたものだけ、ここに一つずつ書く。**
+//
+// **本文の自動判定はしない。**「MIT と書いてありそう」を機械に決めさせると、
+// 関門そのものが意味を失う。**手で確かめた記録として置く場所である。**
+//
+// | パッケージ | 確かめたもの | いつ |
+// |---|---|---|
+// | `khroma` | `node_modules/khroma/license` の一行目が `The MIT License (MIT)`、本文も MIT の全文。mermaid の依存として入った（2026-09-08、9-15） | 2026-09-09 |
+const NPM_LICENCE_OVERRIDES = new Map([
+  ['khroma', 'MIT'],
+])
+
 // ---------------------------------------------------------------------------
 // npm 側
 // ---------------------------------------------------------------------------
@@ -57,6 +74,7 @@ function npmPackages() {
         declared = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).license
       } catch { /* 下で UNKNOWN として落ちる */ }
     }
+    if (!declared) declared = NPM_LICENCE_OVERRIDES.get(name)
     list.push({ name, version: v.version, declared, dir })
   }
   return list.sort((a, b) => a.name.localeCompare(b.name) || a.version.localeCompare(b.version))
