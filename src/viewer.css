@@ -97,6 +97,10 @@
 .gera-doc > pre { contain-intrinsic-size: 14.8em; contain-intrinsic-size: auto 14.8em; }
 .gera-doc > .gera-table { contain-intrinsic-size: 12.9em; contain-intrinsic-size: auto 12.9em; }
 .gera-doc > .gera-math { contain-intrinsic-size: 3.5em; contain-intrinsic-size: auto 3.5em; }
+/* A diagram is the tallest thing on the page. The estimate is deliberately generous:
+   under-estimating makes the scrollbar grow as diagrams are drawn, and the place being
+   read slides up with it. */
+.gera-doc > .gera-mermaid { contain-intrinsic-size: 18em; contain-intrinsic-size: auto 18em; }
 /* A rule's real size is known, so no estimate is needed. */
 .gera-doc > hr { content-visibility: visible; }
 
@@ -277,6 +281,40 @@
   padding: 0.2em 0;
 }
 .gera-math > .katex-block { margin: 0; }
+
+/* --------------------------------------------------------- Diagrams (§9-15) */
+
+/* The colours are not here. mermaid bakes them into a <style> inside the SVG, and what
+   it bakes in is read from gera's own custom properties at the moment it draws
+   (src/diagram.ts) — which is what makes `presets/dark.css` reach a diagram. */
+.gera-mermaid {
+  margin: 1.8em 0;
+  text-align: center;
+  /* Wide diagrams scroll inside their own box, for the same reason as tables and code:
+     moving the start of the body's lines makes it unreadable. */
+  overflow-x: auto;
+}
+/* mermaid writes its own width and height onto the SVG. Left as they are, a diagram
+   wider than the type area sets the width of the box it is scrolling inside, and the
+   scrollbar never appears. */
+.gera-mermaid svg { max-width: 100%; height: auto; }
+
+/* A diagram whose source mermaid could not read. The source is shown instead, so what is
+   needed here is only the line that says why — and it has to look like a notice rather
+   than like body text.
+
+   The colour is `--fg`, not the `--dim` that `.katex-error` above uses. `--dim` measures
+   2.41:1 against the page, which is right for the markup symbols it was chosen for and
+   wrong for a sentence that has to be read once. The sans face and the smaller size are
+   what make it a notice; the colour is not doing that work. */
+.gera-mermaid-error {
+  margin: 0 0 0.6em;
+  font-family: var(--font-sans);
+  font-size: 0.85em;
+  color: var(--fg);
+  text-align: left;
+}
+.gera-mermaid > pre { text-align: left; }
 .gera-doc .katex-block { text-align: center; }
 .gera-doc .katex-display { margin: 0; }
 

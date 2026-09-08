@@ -263,6 +263,45 @@ const mathSlots = (md: MarkdownItInstance): void => {
   });
 };
 
+// ------------------------------------------------------------- Diagrams
+
+/**
+ * The source of every Mermaid block, kept out of the HTML (§9-15).
+ *
+ * Same standing as math above: what goes into the document is a placeholder, and the
+ * real thing is put in after sanitization. It has to be, because what mermaid produces
+ * is an `<svg>` and the allow list does not pass SVG (§7-4 (b)). Loosening the allow
+ * list to let the document's own SVG through, in order to admit ours, would be the wrong
+ * trade — so ours never goes through it.
+ */
+interface DiagramEnv extends Env {
+  diagrams?: string[];
+}
+
+/**
+ * Swap a ```mermaid block for a container, and stow its source.
+ *
+ * The container is put in place from the start rather than swapped in later, for the
+ * same reason display math is (`mathSlots` above): as long as `.gera-mermaid` sits
+ * directly under `.gera-doc`, the line number and the height estimate both work from the
+ * first layout.
+ */
+const diagramBlocks = (md: MarkdownItInstance): void => {
+  const fence = md.renderer.rules.fence;
+  md.renderer.rules.fence = (tokens, idx, options, env, self) => {
+    const token = tokens[idx];
+    const info = token?.info.trim().split(/\s+/)[0]?.toLowerCase();
+    if (!token || info !== "mermaid") {
+      return fence ? fence(tokens, idx, options, env, self) : self.renderToken(tokens, idx, options);
+    }
+    const diagrams = ((env ?? {}) as DiagramEnv).diagrams;
+    if (!diagrams) return self.renderToken(tokens, idx, options);
+    const i = diagrams.push(token.content) - 1;
+    const map = token.map ? ` data-line="${token.map[0]}" data-line-end="${token.map[1]}"` : "";
+    return `<div class="gera-mermaid"${map} data-diagram="${i}"></div>`;
+  };
+};
+
 const md = new MarkdownIt({
   // §7: with `html: false`, the <details> and <br> that are common in AI output come out
   // as raw text and are useless for review. Keep the expressive power intact and secure
@@ -311,7 +350,8 @@ const md = new MarkdownIt({
     // moves on.
     throwOnError: false,
   })
-  .use(mathSlots);
+  .use(mathSlots)
+  .use(diagramBlocks);
 
 /**
  * A wrapper so that only tables scroll horizontally.
@@ -346,9 +386,9 @@ function sanitize(html: string): string {
     USE_PROFILES: { html: true }, // SVG and MathML are not allowed through
     ALLOW_DATA_ATTR: false,
     // data-line / data-line-end map back to the raw source (§6);
-    // data-math is the placeholder for putting math back after sanitization (MathEnv
-    // above).
-    ADD_ATTR: ["data-line", "data-line-end", "data-math"],
+    // data-math and data-diagram are the placeholders for putting our own output back
+    // after sanitization (MathEnv and DiagramEnv above).
+    ADD_ATTR: ["data-line", "data-line-end", "data-math", "data-diagram"],
     FORBID_TAGS: ["style", "form"],
     FORBID_ATTR: ["style", "target"],
   });
@@ -364,10 +404,23 @@ let body: HTMLElement | null = null;
  * one of them could end up skipping sanitization. Actually typesetting the math is the
  * caller's job.
  */
-function build(markdown: string): { html: string; math: (() => string)[]; headings: Heading[] } {
-  const env: MathEnv & HeadingEnv = {};
+function build(markdown: string): {
+  html: string;
+  math: (() => string)[];
+  diagrams: string[];
+  headings: Heading[];
+} {
+  // The array is created up front rather than on first use, because the fence rule has
+  // no way to tell "no diagrams in this document" from "not rendering, only parsing" —
+  // and `listHeadings` below parses without rendering.
+  const env: MathEnv & DiagramEnv & HeadingEnv = { diagrams: [] };
   const html = sanitize(md.render(markdown, env));
-  return { html, math: env.math ?? [], headings: env.headings ?? [] };
+  return {
+    html,
+    math: env.math ?? [],
+    diagrams: env.diagrams ?? [],
+    headings: env.headings ?? [],
+  };
 }
 
 // ---------------------------------------------------------------- Heading list
@@ -451,7 +504,7 @@ export function renderInto(scroller: HTMLElement, text: string): void {
   }
   if (text !== lastText) {
     lastText = text;
-    const { html, math, headings: found } = build(text);
+    const { html, math, diagrams, headings: found } = build(text);
     // Remember the headings while rendering. Calling the outline then does not redo the
     // conversion.
     headingsText = text;
@@ -460,7 +513,7 @@ export function renderInto(scroller: HTMLElement, text: string): void {
     // swapping a single block with replaceWith does not break anything (for local
     // editing).
     body.innerHTML = html;
-    fillBlocks(scroller, body, math);
+    fillBlocks(scroller, body, math, diagrams);
   }
 }
 
@@ -665,12 +718,96 @@ function fillBlocks(
   scroller: HTMLElement,
   body: HTMLElement,
   math: (() => string)[],
+  diagrams: string[],
 ): void {
   watchBlocks(scroller);
   deferMath(body, math);
   deferCode(body);
+  deferDiagrams(body, diagrams);
   // The leading portion is done on the spot so that it makes the initial render.
   for (const top of Array.from(body.children).slice(0, EAGER)) runBlock(top as HTMLElement);
+}
+
+// ---------------------------------------------------------------- Diagrams
+
+/**
+ * The sources of the diagrams in what is currently rendered.
+ *
+ * Kept at module level, unlike math's closures, because `Mod+,` has to be able to draw
+ * them again with the new colours long after rendering is over (`restyleDiagrams`).
+ */
+let diagramSources: string[] = [];
+
+/** Show the source instead, when it will not draw. */
+function diagramFailed(el: HTMLElement, source: string, reason: unknown): void {
+  console.error("[gera] Mermaid の図を描けなかった", reason);
+  // Never leave a blank. A diagram that silently does not appear reads as a gera fault
+  // and takes the content with it; the source at least still says what was meant, and
+  // the message says who could not read it. Broken diagram syntax is ordinary in AI
+  // output, so this path is walked.
+  const note = document.createElement("p");
+  note.className = "gera-mermaid-error";
+  note.textContent = "この図は描けなかった（Mermaid の記法として読めない）";
+  const box = document.createElement("pre");
+  const code = document.createElement("code");
+  // textContent, not innerHTML: the source came out of the document.
+  code.textContent = source;
+  box.append(code);
+  el.replaceChildren(note, box);
+}
+
+/** Draw one diagram into its container. The module arrives on the first call. */
+async function drawDiagram(el: HTMLElement, source: string): Promise<void> {
+  try {
+    const { draw } = await import("./diagram");
+    const svg = await draw(source);
+    // The document may have been re-rendered while mermaid was working.
+    if (!el.isConnected) return;
+    // Our own output, generated by us, so it does not go through sanitization — the same
+    // standing as KaTeX (§7-4 (b)). mermaid sanitizes the labels it takes from the
+    // document itself, at `securityLevel: "strict"` (diagram.ts).
+    el.innerHTML = svg;
+  } catch (e: unknown) {
+    if (el.isConnected) diagramFailed(el, source, e);
+  }
+}
+
+/**
+ * Put every diagram into the queue (§9-15).
+ *
+ * The import sits inside the deferred work rather than in front of it, which is the one
+ * place this differs from highlighting. mermaid is 4.40 MB: a document whose only
+ * diagram is at the very bottom should not fetch it for a reader who never scrolls that
+ * far. Highlighting can afford to load on sight of the document because it is 69 kB.
+ */
+function deferDiagrams(body: HTMLElement, sources: string[]): void {
+  diagramSources = sources;
+  if (!sources.length) return;
+  for (const el of body.querySelectorAll<HTMLElement>("[data-diagram]")) {
+    const source = sources[Number(el.dataset.diagram)];
+    if (source === undefined) continue;
+    defer(blockOf(body, el), () => void drawDiagram(el, source));
+  }
+}
+
+/**
+ * Draw the diagrams again with the colours as they now stand (`Mod+,`).
+ *
+ * Needed because a diagram's colours are inside the SVG rather than applied to it: they
+ * are read from the custom properties at the moment it is drawn (diagram.ts). Everything
+ * else on the page follows new user CSS by itself; this is the one thing that has to be
+ * told.
+ *
+ * Only diagrams that have already been drawn are redrawn. One still waiting for its
+ * block to come near will read the new colours when its turn comes.
+ */
+export function restyleDiagrams(): void {
+  if (!body || !diagramSources.length) return;
+  for (const el of body.querySelectorAll<HTMLElement>("[data-diagram]")) {
+    if (!el.firstChild) continue;
+    const source = diagramSources[Number(el.dataset.diagram)];
+    if (source !== undefined) void drawDiagram(el, source);
+  }
 }
 
 // ------------------------------------------------------------ Alignment

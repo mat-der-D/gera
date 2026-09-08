@@ -1051,6 +1051,10 @@ async function reloadUserCss(): Promise<void> {
   const { path, css } = await readUserCss();
   const line = currentLine();
   applyUserCss(css);
+  // A diagram's colours live inside the SVG mermaid produced, read off the custom
+  // properties at the moment it was drawn (§9-15). New CSS reaches everything else on
+  // the page by itself; the diagrams have to be drawn again.
+  viewer.restyleDiagrams();
   restoreLine(line);
   // Report both outcomes in the banner. When the screen does not change, the
   // user needs to be able to distinguish "it was applied and happened to look
