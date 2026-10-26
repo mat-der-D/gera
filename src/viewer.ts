@@ -22,6 +22,7 @@ import type { Env, MarkdownIt as MarkdownItInstance, Token } from "markdown-it";
 import DOMPurify from "dompurify";
 import katexModule from "@vscode/markdown-it-katex";
 import cjkFriendly from "markdown-it-cjk-friendly";
+import { inTauri, readImage } from "./host";
 // Pull KaTeX's CSS and fonts in from node_modules and ship them inside the artifact.
 // The CSP does not allow anything external (§7-2), so a CDN is not an option. This is
 // placed before viewer.css so that, between rules of equal specificity, our own type
@@ -384,6 +385,24 @@ md.renderer.rules.table_close = (tokens, idx, options, _env, self) =>
  * - `target` is an injection of behavior — "where it opens" — and the body text does not
  *   need it
  */
+/**
+ * Keep `<img>` from loading by itself. The document's `src` is moved to `data-gera-src`
+ * and read back by `loadImage` once the block comes near; left in place, the webview
+ * would ask `tauri://localhost/<path>` for it and show a broken image. `data:` sources
+ * are the exception — they carry their own bytes and need no file.
+ *
+ * It runs after DOMPurify has finished with the element's attributes, which is why the
+ * `data-*` we add here survives `ALLOW_DATA_ATTR: false`.
+ */
+DOMPurify.addHook("afterSanitizeAttributes", (node) => {
+  if (node.nodeName !== "IMG") return;
+  node.removeAttribute("srcset");
+  const src = node.getAttribute("src");
+  if (src === null || /^data:/i.test(src)) return;
+  node.removeAttribute("src");
+  node.setAttribute("data-gera-src", src);
+});
+
 function sanitize(html: string): string {
   return DOMPurify.sanitize(html, {
     USE_PROFILES: { html: true }, // SVG and MathML are not allowed through
@@ -398,6 +417,7 @@ function sanitize(html: string): string {
 }
 
 let lastText: string | null = null;
+let lastPath: string | null = null;
 let body: HTMLElement | null = null;
 
 /**
@@ -480,7 +500,7 @@ function fill(el: HTMLElement, math: (() => string)[]): void {
  * place that needs to know the shape of viewer mode's DOM, and callers only have to hand
  * over a container.
  */
-export function renderInto(scroller: HTMLElement, text: string): void {
+export function renderInto(scroller: HTMLElement, text: string, path: string | null): void {
   if (!body || body.parentElement !== scroller) {
     scroller.replaceChildren();
     body = document.createElement("article");
@@ -488,8 +508,12 @@ export function renderInto(scroller: HTMLElement, text: string): void {
     scroller.append(body);
     lastText = null;
   }
-  if (text !== lastText) {
+  // The same text under another path resolves its images to other files (save-as, or
+  // opening a copy), so the path is part of what "unchanged" means.
+  if (text !== lastText || path !== lastPath) {
     lastText = text;
+    lastPath = path;
+    releaseImages();
     const { html, math, diagrams, headings: found } = build(text);
     // Remember the headings while rendering. Calling the outline then does not redo the
     // conversion.
@@ -499,7 +523,7 @@ export function renderInto(scroller: HTMLElement, text: string): void {
     // directly under .gera-doc is the unit that `content-visibility` works on
     // (viewer.css) and the unit deferred work is grouped by (`blockOf`).
     body.innerHTML = html;
-    fillBlocks(scroller, body, math, diagrams);
+    fillBlocks(scroller, body, math, diagrams, path);
   }
 }
 
@@ -705,13 +729,103 @@ function fillBlocks(
   body: HTMLElement,
   math: (() => string)[],
   diagrams: string[],
+  path: string | null,
 ): void {
   watchBlocks(scroller);
   deferMath(body, math);
   deferCode(body);
   deferDiagrams(body, diagrams);
+  deferImages(body, path);
   // The leading portion is done on the spot so that it makes the initial render.
   for (const top of Array.from(body.children).slice(0, EAGER)) runBlock(top as HTMLElement);
+}
+
+// ------------------------------------------------------------------- Images
+
+/**
+ * Object URLs for the images of the current render, by file path. Holds the promise, so an
+ * image used twice in one document is read once. Emptied on every render: an image
+ * edited on disk is picked up when the document is rendered again, and the old blobs
+ * do not pile up.
+ */
+let images = new Map<string, Promise<string>>();
+
+function releaseImages(): void {
+  for (const url of images.values()) void url.then((u) => URL.revokeObjectURL(u), () => {});
+  images = new Map();
+}
+
+const IMAGE_TYPES: Record<string, string> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+  svg: "image/svg+xml",
+  avif: "image/avif",
+  bmp: "image/bmp",
+};
+
+/**
+ * A path the way it is written in Markdown to the path on disk: `markdown-it` has
+ * percent-encoded anything outside ASCII, and a query or fragment is not part of a file
+ * name. Only reshapes the string; whether it may be read is Rust's call.
+ */
+function imagePath(src: string): string {
+  const bare = src.replace(/[?#].*$/s, "");
+  try {
+    return decodeURIComponent(bare);
+  } catch {
+    return bare;
+  }
+}
+
+function loadImageUrl(document: string, src: string): Promise<string> {
+  const path = imagePath(src);
+  const cached = images.get(path);
+  if (cached) return cached;
+  const type = IMAGE_TYPES[path.slice(path.lastIndexOf(".") + 1).toLowerCase()] ?? "";
+  const url = readImage(document, path).then((bytes) =>
+    URL.createObjectURL(new Blob([bytes], { type })),
+  );
+  images.set(path, url);
+  return url;
+}
+
+/** Say why an image is not there, in its place. Never leave a silent hole. */
+function imageFailed(img: HTMLImageElement, reason: unknown): void {
+  const note = document.createElement("span");
+  note.className = "gera-image-missing";
+  const alt = img.getAttribute("alt");
+  const why = typeof reason === "string" ? reason : "読み込めなかった";
+  note.textContent = alt ? `画像「${alt}」を表示できない: ${why}` : `画像を表示できない: ${why}`;
+  img.replaceWith(note);
+}
+
+async function loadImage(img: HTMLImageElement, path: string | null): Promise<void> {
+  const src = img.dataset.geraSrc;
+  if (src === undefined) return;
+  if (!path || !inTauri) {
+    // An unsaved document has no folder to resolve against; the browser harness has no
+    // Rust to ask.
+    imageFailed(img, path ? "ブラウザでは読み込めない" : "保存してから表示される");
+    return;
+  }
+  try {
+    const url = await loadImageUrl(path, src);
+    // The document may have been re-rendered while the file was being read.
+    if (!img.isConnected) return;
+    img.src = url;
+  } catch (e: unknown) {
+    if (img.isConnected) imageFailed(img, e);
+  }
+}
+
+/** Put every image that points at a file into the queue. */
+function deferImages(body: HTMLElement, path: string | null): void {
+  for (const img of body.querySelectorAll<HTMLImageElement>("img[data-gera-src]")) {
+    defer(blockOf(body, img), () => void loadImage(img, path));
+  }
 }
 
 // ---------------------------------------------------------------- Diagrams

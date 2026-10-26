@@ -114,6 +114,19 @@ export async function fileDigest(path: string): Promise<string> {
 }
 
 /**
+ * The bytes of an image that `document` refers to as `src` (a relative path, as
+ * written in the Markdown).
+ *
+ * Whether `src` is acceptable is decided on the Rust side, which refuses URLs,
+ * absolute paths, unknown extensions and oversized files (`read_image`). Nothing is
+ * pre-checked here, for the same reason as `openExternal`. A refusal throws with a
+ * message fit to show.
+ */
+export async function readImage(document: string, src: string): Promise<ArrayBuffer> {
+  return invoke<ArrayBuffer>("read_image", { document, src });
+}
+
+/**
  * The result of a write (§9-6).
  *
  * A mismatch is not an exception. An exception is the shape that means "the save
