@@ -184,6 +184,77 @@ fn read_file(allowed: State<'_, Allowed>, path: String) -> Result<FileContents, 
     Ok(FileContents { text, digest })
 }
 
+/// The extensions `read_image` hands over. What the webview can decode on every
+/// platform we ship for; anything else (an `.exe` renamed in, say) is refused
+/// before it is read.
+const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "svg", "avif", "bmp"];
+
+/// The largest image `read_image` will read. The bytes cross IPC in one piece and
+/// then sit in a blob, so an unbounded file would stall the window.
+const IMAGE_MAX_BYTES: u64 = 32 * 1024 * 1024;
+
+/// Turn `src` as written in a document into the file it names.
+///
+/// Only a path relative to the document is accepted. A URL or an absolute path
+/// is refused here rather than in the front end, for the same reason as
+/// `open_external`: the decision has to live where a taken-over webview cannot
+/// skip it (§7-4).
+///
+/// `..` is allowed — `![](../img/a.png)` is ordinary. What bounds the reach is not
+/// the directory but the extension list and the size cap, and the fact that the
+/// bytes can only end up in an `<img>`: `img-src` and `connect-src` leave no way
+/// to send them anywhere (§7-2).
+fn resolve_image(document: &Path, src: &str) -> Result<PathBuf, String> {
+    let refused = || format!("{src} は読み込まない（文書からの相対パスで書いた画像だけ読み込む）");
+    let has_scheme = src.split_once(':').is_some_and(|(head, _)| {
+        !head.is_empty() && !head.contains(['/', '\\'])
+    });
+    if src.is_empty()
+        || has_scheme
+        || src.starts_with(['/', '\\'])
+        || Path::new(src).is_absolute()
+    {
+        return Err(refused());
+    }
+    let document = normalize(document)?;
+    let dir = document
+        .parent()
+        .ok_or_else(|| format!("{} の置き場所を決められなかった", document.display()))?;
+    let resolved = fs::canonicalize(dir.join(src))
+        .map_err(|_| format!("{src} が見つからない"))?;
+    let supported = resolved
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| IMAGE_EXTS.iter().any(|x| e.eq_ignore_ascii_case(x)));
+    if !supported {
+        return Err(format!("{src} は対応していない形式の画像である"));
+    }
+    Ok(resolved)
+}
+
+/// The bytes of an image that a document refers to.
+///
+/// `document` must be in the set — an image is read only on behalf of a file the
+/// user opened. The bytes go back as a raw response; as a `Vec<u8>` they would be
+/// serialised into a JSON array of numbers.
+#[tauri::command]
+fn read_image(
+    allowed: State<'_, Allowed>,
+    document: String,
+    src: String,
+) -> Result<tauri::ipc::Response, String> {
+    require_allowed(&allowed, &document)?;
+    let path = resolve_image(Path::new(&document), &src)?;
+    let size = fs::metadata(&path)
+        .map_err(|e| format!("{src} を読めなかった: {e}"))?
+        .len();
+    if size > IMAGE_MAX_BYTES {
+        return Err(format!("{src} は大きすぎる（{} MB まで）", IMAGE_MAX_BYTES / 1024 / 1024));
+    }
+    let bytes = fs::read(&path).map_err(|e| format!("{src} を読めなかった: {e}"))?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
 /// The result of a write (§9-6).
 ///
 /// A mismatch is not an Err. Err is the shape that means "the save operation
@@ -578,6 +649,7 @@ pub fn run() {
             read_file,
             write_file,
             file_digest,
+            read_image,
             pick_file_to_open,
             pick_path_to_save,
             initial_path,
@@ -588,4 +660,60 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("gera の起動に失敗した");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A fresh directory with `doc.md`, `a.png`, `sub/b.JPG`, `note.txt`.
+    fn fixture(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("gera-test-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("sub")).unwrap();
+        for f in ["doc.md", "a.png", "sub/b.JPG", "note.txt"] {
+            fs::write(root.join(f), b"x").unwrap();
+        }
+        root
+    }
+
+    #[test]
+    fn resolves_relative_images() {
+        let root = fixture("ok");
+        let doc = root.join("doc.md");
+        let root = fs::canonicalize(&root).unwrap();
+        assert_eq!(resolve_image(&doc, "a.png").unwrap(), root.join("a.png"));
+        assert_eq!(resolve_image(&doc, "./sub/b.JPG").unwrap(), root.join("sub/b.JPG"));
+        // `..` from a subdirectory document reaches its sibling.
+        let sub_doc = root.join("sub/doc.md");
+        fs::write(&sub_doc, b"x").unwrap();
+        assert_eq!(resolve_image(&sub_doc, "../a.png").unwrap(), root.join("a.png"));
+    }
+
+    #[test]
+    fn refuses_urls_and_absolute_paths() {
+        let root = fixture("refuse");
+        let doc = root.join("doc.md");
+        let abs = root.join("a.png").to_string_lossy().into_owned();
+        for src in ["", "https://example.com/a.png", "file:///etc/passwd", "data:image/png;base64,AA", "C:\\a.png", "/a.png", "\\a.png", abs.as_str()] {
+            assert!(resolve_image(&doc, src).is_err(), "{src:?} should be refused");
+        }
+    }
+
+    #[test]
+    fn refuses_other_extensions_and_missing_files() {
+        let root = fixture("ext");
+        let doc = root.join("doc.md");
+        assert!(resolve_image(&doc, "note.txt").unwrap_err().contains("対応していない"));
+        assert!(resolve_image(&doc, "nope.png").unwrap_err().contains("見つからない"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_is_judged_by_its_target() {
+        let root = fixture("link");
+        let doc = root.join("doc.md");
+        std::os::unix::fs::symlink(root.join("note.txt"), root.join("looks.png")).unwrap();
+        assert!(resolve_image(&doc, "looks.png").is_err());
+    }
 }

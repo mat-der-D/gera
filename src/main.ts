@@ -560,7 +560,7 @@ function enterView(line: number): void {
   // so a reload or a newly opened file leaves the tracker off (§9-11). Coming back from
   // edit mode it is already off (enterEdit).
   tracker?.off();
-  viewer.renderInto(el, text);
+  viewer.renderInto(el, text, currentPath);
   if (line > 0 || !fresh) viewer.scrollToLine(el, line);
   // The key list for an empty document lives inside the edit-mode container.
   // Moving to view mode hides it, so bring the top-left hint back (paired with

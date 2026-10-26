@@ -159,6 +159,15 @@
 
 .gera-doc img { display: block; max-width: 100%; margin: 1.8em auto; }
 
+/* An image that could not be shown (not found, an unsupported format, an unsaved
+   document). Stands where the image would have been and says why, in the same notice
+   voice as `.gera-mermaid-error` below — `--fg` rather than `--dim`, for the same reason. */
+.gera-image-missing {
+  font-family: var(--font-sans);
+  font-size: 0.85em;
+  color: var(--fg);
+}
+
 /* --------------------------------------------------------------- Code */
 
 .gera-doc code, .gera-doc pre { font-family: var(--font-mono); }
